@@ -1,0 +1,246 @@
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h2 class="text-primary"><i class="bi bi-diagram-3"></i> Query Builder</h2>
+      <div>
+        <button onclick="submitQuery()" class="btn btn-success me-2"><i class="fas fa-save"></i> Save Query</button>
+        <button onclick="loadQuery()" class="btn btn-outline-secondary"><i class="fas fa-folder"></i> Load Query</button>
+      </div>
+    </div>
+    
+<!-- 
+
+  <button onclick="submitQuery()" class="btn btn-success me-2">💾 Save Query</button>
+  <button onclick="loadQuery()" class="btn btn-outline-warning">📂 Load Query</button>
+</div> -->
+
+
+    <div class="card shadow-sm border">
+      <div class="card-body">
+        <div id="builder-container"></div>
+      </div>
+    </div>
+    
+
+<script id="parameter-data" type="application/json">{{ structured_categories|safe }}</script>
+
+<script>
+const parameters = JSON.parse(document.getElementById("parameter-data").textContent);
+const builderContainer = document.getElementById("builder-container");
+
+function createCondition() {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "condition",
+    parameter: null,
+    operator: null,
+    value: "",
+    logic: "AND"  // 👈 new
+  };
+}
+
+
+function createGroup(withLogic = true) {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "group",
+    logic: withLogic ? "AND" : null,  // ❗ root group has no logic
+    children: [createCondition()]
+  };
+}
+
+let queryTree = createGroup(false);  // no logic on root
+
+function renderBuilder() {
+  builderContainer.innerHTML = renderGroup(queryTree);
+}
+
+function renderGroup(group) {
+  let html = `<div class="group" data-id="${group.id}" style="border:1px solid #ccc;padding:10px;margin:10px;">`;
+
+  if (group.logic !== null) {
+    html += `
+      <select onchange="updateGroupLogic('${group.id}', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px;">
+        <option value="AND" ${group.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${group.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="NOT" ${group.logic === 'NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  html += `
+    <button onclick="addCondition('${group.id}')" class="btn btn-sm btn-outline-primary me-1"><i class="fas fa-plus"></i> Condition</button>
+    <button onclick="addGroup('${group.id}')" class="btn btn-sm btn-outline-secondary me-1"><i class="fas fa-plus"></i> Sub-Group</button>
+    ${group.logic !== null ? '<button onclick="deleteGroup(\'' + group.id + '\')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>' : ''}
+    <ul>
+  `;
+
+  group.children.forEach((child, index) => {
+    if (child.type === 'condition') {
+      html += renderCondition(child, group.id, index);
+    } else if (child.type === 'group') {
+      html += `<li>${renderGroup(child)}</li>`;
+    }
+  });
+
+  html += "</ul></div>";
+  return html;
+}
+
+function renderCondition(cond, groupId, index) {
+  const group = findGroupById(queryTree, groupId);
+  // const index = group.children.findIndex(c => c.id === cond.id);
+
+  let logicDropdown = '';
+  if (index > 0) {
+    logicDropdown = `
+      <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px;">
+        <option value="AND" ${cond.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${cond.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="NOT" ${cond.logic === 'NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  return `<li>
+    ${logicDropdown}
+    <select onchange="updateCondition('${groupId}', '${cond.id}', 'parameter', this.value)" class="form-select d-inline me-2 mb-1" style="width: 220px;">
+      <option value="">-- Select Parameter --</option>
+      ${flattenParameters().map(p => `<option value="${p.id}" ${cond.parameter == p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+    </select>
+    <select onchange="updateCondition('${groupId}', '${cond.id}', 'operator', this.value)" class="form-select d-inline me-2 mb-1" style="width: 220px;">
+      <option ${cond.operator === 'IS EQUAL TO' ? 'selected' : ''}>IS EQUAL TO</option>
+      <option ${cond.operator === 'IS NOT EQUAL TO' ? 'selected' : ''}>IS NOT EQUAL TO</option>
+      <option ${cond.operator === 'CONTAINS' ? 'selected' : ''}>CONTAINS</option>
+      <option ${cond.operator === 'DOES NOT CONTAIN' ? 'selected' : ''}>DOES NOT CONTAIN</option>
+      <option ${cond.operator === 'STARTS WITH' ? 'selected' : ''}>STARTS WITH</option>
+      <option ${cond.operator === 'ENDS WITH' ? 'selected' : ''}>ENDS WITH</option>
+      <option ${cond.operator === 'IS BETWEEN' ? 'selected' : ''}>IS BETWEEN</option>
+      <option ${cond.operator === 'EXISTS' ? 'selected' : ''}>EXISTS</option>
+      <option ${cond.operator === 'DOES NOT EXIST' ? 'selected' : ''}>DOES NOT EXIST</option>
+    </select>
+    <input type="text" value="${cond.value}" oninput="updateCondition('${groupId}', '${cond.id}', 'value', this.value)" class="form-control form-control-sm d-inline me-2 mb-1 rounded shadow-sm" style="width: 220px;" placeholder="Value..." />
+    <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
+  </li>`;
+}
+
+function updateGroupLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function flattenParameters() {
+  let flat = [];
+  parameters.forEach(cat =>
+    cat.subcategories.forEach(sub =>
+      sub.parameters.forEach(param =>
+        flat.push({
+          ...param,
+          subcategory: sub.name,
+          category: cat.name
+        })
+      )
+    )
+  );
+  return flat;
+}
+
+
+function findGroupById(tree, id) {
+  if (tree.id === id) return tree;
+  for (const child of tree.children) {
+    if (child.type === 'group') {
+      const found = findGroupById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function changeLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function addCondition(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createCondition());
+    renderBuilder();
+  }
+}
+
+function deleteCondition(groupId, condId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children = group.children.filter(c => c.id !== condId);
+    renderBuilder();
+  }
+}
+
+function updateCondition(groupId, condId, key, value) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    const cond = group.children.find(c => c.id === condId);
+    if (cond) {
+      cond[key] = value;
+    }
+  }
+}
+
+function addGroup(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createGroup());
+    renderBuilder();
+  }
+}
+
+function deleteGroup(groupId) {
+  if (queryTree.id === groupId) return alert("Cannot delete root group.");
+  const recursiveDelete = (parent) => {
+    parent.children = parent.children.filter(c => {
+      if (c.type === 'group') {
+        if (c.id === groupId) return false;
+        recursiveDelete(c);
+      }
+      return true;
+    });
+  };
+  recursiveDelete(queryTree);
+  renderBuilder();
+}
+
+function submitQuery() {
+  fetch('/save-query/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify(queryTree)
+  }).then(res => res.json()).then(data => {
+    alert(data.message);
+  });
+}
+
+function loadQuery() {
+  fetch('/load-query/1/')  // TODO: make this dynamic later
+    .then(res => res.json())
+    .then(data => {
+      queryTree = data;
+      renderBuilder();
+    });
+}
+
+renderBuilder();
+</script>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Query Builder{% endblock %}</title>
+
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+
+  <!-- Required External JS -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/smooth-scroll@16.1.3/dist/smooth-scroll.polyfills.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <!-- JS -->
+  <script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
+  <script src="{% static 'assets/js/volt.js' %}"></script>  
+
+  <!-- Volt CSS -->
+  <link href="{% static 'assets/vendor/bootstrap/css/bootstrap.min.css' %}" rel="stylesheet">
+  <link href="{% static 'assets/css/volt.css' %}" rel="stylesheet">
+</head>
+<body>
+  <div class="d-flex flex-column min-vh-100">
+
+    <!-- Top Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark  fixed-top shadow-sm" style="background-color: #002d62;">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="#"><i class="fas fa-brain"></i> Query Builder UI</a>
+
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+          aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item">
+              {% if request.user.is_staff %}
+              <a class="nav-link" href="/admin-dashboard/"><i class="fa-solid fa-tools"></i> Admin Dashboard</a>
+              {% endif %}
+            </li>
+            <li class="nav-item">
+              {% if request.user.is_staff %}
+              <a class="nav-link" href="/column-mapping/"><i class="fas fa-folder-open"></i> Column Mapping</a>
+              {% endif %}
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/query-builder/"><i class="fas fa-brain"></i> Query Builder</a>
+            </li>
+            <li class="nav-item">
+              {% if request.user.is_staff %}
+              <a class="nav-link" href="/admin/main/"><i class="fa-solid fa-server"></i> Database Mgr</a>
+              {% endif %}
+              {% comment %} <a class="nav-link" href="{% url 'query_logs' %}"> <i class="fas fa-clipboard-list"></i> Query Logs</a> {% endcomment %}
+            </li>
+            <ul class="navbar-nav ms-auto">
+              {% if request.user.is_authenticated %}
+                <li class="nav-item">
+                  <a class="nav-link" href="/logout/">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                  </a>
+                </li>
+              {% endif %}
+            </ul>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+
+    <!-- Main layout container -->
+    <div class="container-fluid" style="margin-top: 56px;">  <!-- adjust for navbar height -->
+      {% comment %} <div class="row"> {% endcomment %}
+
+        <!-- Main Content -->
+        <main class="container mt-5 py-2" style="margin-left: 10px; margin-right: 10px; max-width: 1400px;">
+          {% block content %}
+          {% endblock %}
+        </main>
+      {% comment %} </div> {% endcomment %}
+    </div>
+
+    <!-- Sticky Footer -->
+    <footer class="bg-light text-center text-muted py-3 mt-auto border-top">
+      <small>© 2025 Query Builder UI. All rights reserved.</small>
+    </footer>
+
+  </div>
+
+</body>
+</html>

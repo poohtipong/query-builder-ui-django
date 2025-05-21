@@ -1,0 +1,79 @@
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+<h2 class="mb-4"><i class="fas fa-database"></i> Manage External Databases</h2>
+
+<!-- Flash messages -->
+{% if messages %}
+  {% for message in messages %}
+    <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+  {% endfor %}
+{% endif %}
+
+<!-- Add Database -->
+<div class="card mb-4 shadow-sm">
+  <div class="card-header">Add New Database</div>
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="create" value="1">
+      <div class="row g-3">
+        {% for field in fields %}
+          <div class="col-md-4">
+            <label class="form-label">{{ field|title }}</label>
+            {% if field == 'password' %}
+              <input type="password" name="{{ field }}" class="form-control" required>
+            {% else %}
+              <input type="text" name="{{ field }}" class="form-control" required>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary"><i class="fas fa-plus-circle"></i> Add & Introspect</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- List Databases -->
+<div class="card shadow-sm">
+  <div class="card-header">Existing Databases</div>
+  <div class="card-body table-responsive">
+    <table class="table table-bordered table-hover table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Name</th>
+          <th>Host</th>
+          <th>Port</th>
+          <th>User</th>
+          <th>DB Name</th>
+          <th>Hospital ID</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for db in databases %}
+        <tr>
+          <td>{{ db.name }}</td>
+          <td>{{ db.host }}</td>
+          <td>{{ db.port }}</td>
+          <td>{{ db.user }}</td>
+          <td>{{ db.db_name }}</td>
+          <td>{{ db.hospital_id }}</td>
+          <td>
+            <form method="post" onsubmit="return confirm('Are you sure?')" style="display: inline;">
+              {% csrf_token %}
+              <input type="hidden" name="delete" value="1">
+              <input type="hidden" name="db_id" value="{{ db.id }}">
+              <button class="btn btn-sm btn-danger"><i class="fas fa-trash"></i> Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted">No databases yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

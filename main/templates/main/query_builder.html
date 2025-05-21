@@ -1,0 +1,1632 @@
+
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+<!-- Save Status Message -->
+<div id="toast-container" class="position-fixed top-1 end-0 p-3" style="z-index: 1055;"></div>
+
+<div class="row">
+  <!-- Left Panel: Menu + Output Parameters -->
+  <div class="col-md-3">
+
+    <!-- Menu Card -->
+    <div class="card shadow-sm border mb-4">
+      <div class="card-header fw-bold d-flex align-items-center gap-2" style="background: white;">
+        <div class="menu-dot" style="width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 4px 4px, magenta 0%, cyan 80%);"></div>
+        <span style="font-weight: bold;">Menu</span>
+      </div>
+      <div class="card-body">
+        {% comment %} <h6 class="text-primary"><i class="bi bi-diagram-3"></i> Query Builder</h6> {% endcomment %}
+        <div class="d-grid gap-2">
+          <button onclick="submitQuery()" class="btn btn-dark-gray">
+            <i class="fas fa-save"></i>&nbsp&nbsp Save Query
+          </button>
+          <button onclick="loadQuery()" class="btn btn-dark-gray">
+            <i class="fas fa-folder"></i>&nbsp&nbsp Load Query
+          </button>
+          <button onclick="openExportModal()" class="btn btn-dark-gray">
+            <i class="fas fa-download"></i>&nbsp&nbsp Export Query
+          </button>
+          <input type="file" id="importQueryFile" accept=".json" style="display: none" onchange="importQueryFromFile(event)" />
+          <button onclick="document.getElementById('importQueryFile').click()" class="btn btn-dark-gray">
+            <i class="fas fa-upload"></i>&nbsp&nbsp Import Query
+          </button>
+          <button onclick="toggleGroupingMode()" class="btn btn-dark-gray">
+            <i class="fas fa-object-group"></i>&nbsp&nbsp Group/Ungroup
+          </button>
+          <button onclick="runQuery()" class="btn btn-dark-gray run-query-btn">
+            <strong>Run Query</strong>
+            <i class="fa-solid fa-circle-play play-icon ms-2"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output Parameters Card -->
+    <div class="card shadow-sm border">
+      <div class="card-header bg-light fw-bold">
+        Output Parameters
+      </div>
+      <div class="card-body">
+        <p id="selected-output-display" class="small text-muted ms-2 mb-2" style="font-size: 13px;">
+          <strong>Selected Output Parameters:</strong> 
+          <div id="selected-output-names" class="d-flex flex-wrap gap-2 mt-2"></div>
+          <div class="mt-2 ms-2">
+            <button id="clear-selected-outputs" class="btn btn-sm btn-danger px-2 py-1" style="font-size: 12px; margin-left: 5px;" onclick="clearSelectedOutputs()">Clear All</button>
+          </div>
+        </p>
+        <hr>
+        <div class="form-check mb-2 ms-2">
+          <input type="checkbox" id="select-all-output" class="form-check-input" onchange="selectAllOutputCheckboxes(this)">
+          <label for="select-all-output" class="form-check-label"><strong>Select All</strong></label>
+        </div>
+      
+        <input type="text" placeholder="Search" class="search-bar" oninput="filterOutputParameters(this.value)">
+        
+        <div id="output-parameters-list"></div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Panel: Query Builder + Results -->
+  <div class="col-md-9">
+
+    <!-- Builder Container Card -->
+    <div class="card shadow-sm border mb-4">
+      <h5 id="current-query-title" class="card-header bg-light fw-bold mb-3" style="color: #004b6b;">
+        Query Builder
+      </h5>
+      <div class="card-body">
+        <div id="builder-container"></div>
+      </div>
+    </div>
+
+    <!-- Query Results Card -->
+    <div class="card shadow-sm border mt-4">
+      <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
+        <span>Query Results</span>
+        <div id="record-count-label" class="text-muted small">
+          <!-- Count will appear here -->
+        </div>
+        <button onclick="exportToCSV()" class="btn btn-sm btn-success">
+          <i class="fas fa-file-csv"></i> Export CSV
+        </button>
+      </div>
+      <div id="query-results" class="card-body" style="overflow-x: auto; max-height: 350px; overflow-y: auto; white-space: pre-wrap;">
+        <!-- Results will be rendered here -->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script id="parameter-data" type="application/json">
+  {{ structured_categories|safe }}
+</script>
+
+<script>
+
+  let groupingModeActive = false;
+
+  function toggleGroupingMode() {
+    groupingModeActive = !groupingModeActive;
+  
+    if (groupingModeActive) {
+      enableGroupingSelection();
+      toastr("Grouping Mode: Select conditions to Group/Ungroup", "info");
+    } else {
+      applyGroupingSelection();
+      toastr("Grouping applied", "success");
+    }
+  }
+
+  function enableGroupingSelection() {
+    const allConditions = [];
+  
+    // Helper to flatten conditions (recursively)
+    function collectConditions(group, inheritedLogic = null) {
+      group.children.forEach((child, index) => {
+        if (child.type === 'condition') {
+          allConditions.push({
+            ...child,
+            logic: inheritedLogic && index === 0 ? inheritedLogic : child.logic,  // Inherit group's logic for the first child
+            wasGrouped: inheritedLogic !== null
+          });
+        } else if (child.type === 'group') {
+          collectConditions(child, child.logic);  // Pass group's logic down
+        }
+      });
+    }
+  
+    // Step 1: Flatten all conditions
+    collectConditions(queryTree);
+  
+    // Step 2: Remove all groups, leave only conditions directly under root
+    queryTree.children = allConditions.map(cond => ({
+      id: cond.id,
+      type: "condition",
+      parameter: cond.parameter,
+      operator: cond.operator,
+      value: cond.value,
+      value0: cond.value0,
+      value1: cond.value1,
+      logic: cond.logic || null
+    }));
+  
+    renderBuilder(); // re-render flattened builder
+  
+    // Step 3: Inject checkboxes with correct checked status
+    setTimeout(() => {
+      const allConditionItems = document.querySelectorAll('.condition-list li');
+  
+      allConditionItems.forEach(li => {
+        const id = li.dataset.id;
+        const wasGrouped = allConditions.find(c => c.id == id)?.wasGrouped;
+  
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'condition-selector-checkbox';
+        checkbox.style.marginRight = '8px';
+        checkbox.dataset.id = id;
+        checkbox.checked = !!wasGrouped; // Check if it was previously grouped
+  
+        li.insertBefore(checkbox, li.firstChild);
+      });
+    }, 50);
+  }
+  
+
+  function applyGroupingSelection() {
+    const checkboxes = document.querySelectorAll('.condition-selector-checkbox');
+    
+    const selectedIds = [];
+    checkboxes.forEach(cb => {
+      if (cb.checked) {
+        selectedIds.push(cb.dataset.id);
+      }
+    });
+  
+    if (selectedIds.length === 0) {
+      // Nothing selected → nothing to group
+      groupingModeActive = false;
+      document.querySelectorAll('.condition-selector-checkbox').forEach(cb => cb.remove());
+      renderBuilder();
+      return;
+    }
+  
+    const newChildren = [];
+    let buffer = [];
+  
+    queryTree.children.forEach(child => {
+      if (selectedIds.includes(child.id)) {
+        buffer.push(child);
+      } else {
+        if (buffer.length >= 2) {
+          const newGroup = createGroup();
+          newGroup.logic = buffer[0].logic || "AND"; // Inherit first child's logic
+          buffer.forEach((item, idx) => {
+            if (idx > 0) item.logic = null; // Inside group, no need logic between children
+          });
+          newGroup.children = buffer;
+          newChildren.push(newGroup);
+        } else if (buffer.length === 1) {
+          newChildren.push(buffer[0]);
+        }
+        buffer = []; // Reset buffer
+  
+        newChildren.push(child);
+      }
+    });
+  
+    if (buffer.length >= 2) {
+      const newGroup = createGroup();
+      newGroup.logic = buffer[0].logic || "AND";
+      buffer.forEach((item, idx) => {
+        if (idx > 0) item.logic = null;
+      });
+      newGroup.children = buffer;
+      newChildren.push(newGroup);
+    } else if (buffer.length === 1) {
+      newChildren.push(buffer[0]);
+    }
+  
+    queryTree.children = newChildren;
+    fixConditionLogics(queryTree);
+
+    // Clean up UI
+    document.querySelectorAll('.condition-selector-checkbox').forEach(cb => cb.remove());
+    groupingModeActive = false;
+    renderBuilder();
+  }
+  
+  function ungroupSelectedConditions(ids) {
+    ids.forEach(id => {
+      const parentGroup = findParentGroupByChildId(queryTree, id);
+      if (!parentGroup) return;
+  
+      const child = parentGroup.children.find(c => c.id === id);
+      if (!child) return;
+  
+      if (parentGroup.logic !== null) {
+        // Only move if inside a group
+        const grandParent = findParentGroupByChildId(queryTree, parentGroup.id);
+        if (!grandParent) return;
+  
+        parentGroup.children = parentGroup.children.filter(c => c.id !== id);
+        grandParent.children.push(child);
+      }
+    });
+  
+    cleanEmptyGroups(queryTree);
+  }
+  
+  function cleanEmptyGroups(group) {
+    group.children = group.children.filter(child => {
+      if (child.type === 'group') {
+        cleanEmptyGroups(child);
+        return child.children.length > 0;
+      }
+      return true;
+    });
+  }
+  
+  function groupSelectedConditions(selectedIds) {
+    const parentGroup = findParentGroupByChildId(queryTree, selectedIds[0]);
+    if (!parentGroup) return;
+  
+    const newChildren = [];
+    let buffer = [];  // Temporary list to collect consecutive checked items
+  
+    parentGroup.children.forEach(child => {
+      if (selectedIds.includes(child.id)) {
+        buffer.push(child); // Add to buffer
+      } else {
+        // When we hit an unchecked child, process buffer
+        if (buffer.length >= 2) {
+          const newGroup = createGroup();
+          newGroup.children = buffer;
+          newChildren.push(newGroup);
+        } else if (buffer.length === 1) {
+          newChildren.push(buffer[0]); // Single condition stays alone
+        }
+        buffer = []; // Reset buffer
+  
+        newChildren.push(child); // Add the current unselected child
+      }
+    });
+  
+    // After loop, check if buffer still has items
+    if (buffer.length >= 2) {
+      const newGroup = createGroup();
+      newGroup.children = buffer;
+      newChildren.push(newGroup);
+    } else if (buffer.length === 1) {
+      newChildren.push(buffer[0]);
+    }
+  
+    parentGroup.children = newChildren;
+  }
+  
+  function fixConditionLogics(group) {
+    group.children.forEach((child, index) => {
+      if (child.type === "condition") {
+        if (index === 0) {
+          child.logic = null; // First condition has no logic
+        } else if (!child.logic) {
+          child.logic = "AND"; // Default logic for later conditions
+        }
+      } else if (child.type === "group") {
+        fixConditionLogics(child); // Recurse into groups
+      }
+    });
+  }
+  
+  function ungroupAllConditions() {
+    // NOT auto-ungroup yet unless you ask (we can add if needed)
+  }
+
+  function findParentGroupByChildId(group, childId) {
+    for (const child of group.children) {
+      if (child.id === childId) return group;
+      if (child.type === 'group') {
+        const found = findParentGroupByChildId(child, childId);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  
+
+  let currentQueryName = "Untitled Query";
+
+  const OPERATORS_BY_TYPE = {
+    text: ["IS_EQUAL_TO", "IS_NOT_EQUAL_TO", "CONTAINS", "DOES_NOT_CONTAIN", "IS_INCLUDED", "IS_EXCLUDED", "STARTS_WITH", "ENDS_WITH", "EXISTS", "DOES_NOT_EXIST"],
+    date: ["IS_EQUAL_TO", "IS_NOT_EQUAL_TO", "IS_BETWEEN", "EXISTS", "DOES_NOT_EXIST"],
+    integer: ["IS_EQUAL_TO", "IS_NOT_EQUAL_TO", "IS_BETWEEN", "EXISTS", "DOES_NOT_EXIST"],
+    float: ["IS_EQUAL_TO", "IS_NOT_EQUAL_TO", "IS_BETWEEN", "EXISTS", "DOES_NOT_EXIST"],
+    default: ["IS_EQUAL_TO", "IS_NOT_EQUAL_TO", "EXISTS", "DOES_NOT_EXIST"]
+  };
+
+  function getParameterTypeById(id) {
+    const flat = flattenParameters();
+    const found = flat.find(p => p.id == id);
+    return found ? found.data_type : "default";
+  }
+
+    
+  let parameterSelectTarget = { groupId: null, condId: null };
+
+
+  const parameters = JSON.parse(document.getElementById("parameter-data").textContent);
+  const builderContainer = document.getElementById("builder-container");
+
+  function createCondition() {
+    return {
+      id: Date.now() + "-" + Math.random(),
+      type: "condition",
+      parameter: null,
+      operator: null,
+      value: "",
+      value0: "",
+      value1: ""                  
+  //  logic: "AND"  // 👈 new
+    };
+  }
+
+
+  function createGroup(withLogic = true) {
+    return {
+      id: Date.now() + "-" + Math.random(),
+      type: "group",
+      logic: withLogic ? "AND" : null,  // ❗ root group has no logic
+      children: [createCondition()]
+    };
+  }
+
+  let queryTree = createGroup(false);  // no logic on root
+
+  function renderBuilder() {
+    builderContainer.innerHTML = renderGroup(queryTree);
+    initSortable(); // 💡 Initialize drag-drop
+  }
+
+  function renderGroup(group) {
+    const isRoot = group.logic === null;
+    let html = `<div class="group" data-id="${group.id}">`;
+  
+    // Logic Dropdown (for non-root groups)
+    if (group.logic !== null) {
+      html += `
+        <div class="d-flex align-items-center mb-2">
+          <select onchange="updateGroupLogic('${group.id}', this.value)" 
+                  class="form-select d-inline me-2 mb-1 logic-control" 
+                  style="width: 90px;">
+            <option value="AND" ${group.logic === 'AND' ? 'selected' : ''}>AND</option>
+            <option value="OR" ${group.logic === 'OR' ? 'selected' : ''}>OR</option>
+            <option value="AND NOT" ${group.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+          </select>
+  
+          <button class="btn btn-sm btn-danger ms-2" onclick="deleteGroup('${group.id}')">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      `;
+    }
+  
+    html += `
+      <ul class="condition-list" data-group="${group.id}">
+    `;
+  
+    group.children.forEach((child, index) => {
+      if (child.type === 'condition') {
+        html += renderCondition(child, group.id, index);
+      } else if (child.type === 'group') {
+        html += `<li data-id="${child.id}" class="bordered-item">${renderGroup(child)}</li>`;
+      }
+    });
+  
+    html += "</ul>";
+  
+    // Only root group shows "Add Patient/Study Criteria" button
+    if (isRoot) {
+      html += `
+        <div class="mt-2">
+          <button onclick="addCondition('${group.id}')" 
+                  class="btn btn-sm btn-info me-1 custom-operator-btn">
+            <i class="fas fa-plus"></i> Patient/Study Criteria
+          </button>
+        </div>
+      `;
+    }
+  
+    html += "</div>";
+  
+    return html;
+  }
+  
+  function renderCondition(cond, groupId, index) {
+    const group = findGroupById(queryTree, groupId);
+    // const index = group.children.findIndex(c => c.id === cond.id);
+
+    let logicDropdown = '';
+    if (index > 0) {
+      logicDropdown = `
+        <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select d-inline me-2 mb-1 logic-control" style="width: 90px;">
+          <option value="AND" ${cond.logic === 'AND' ? 'selected' : ''}>AND</option>
+          <option value="OR" ${cond.logic === 'OR' ? 'selected' : ''}>OR</option>
+          <option value="AND NOT" ${cond.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+        </select>
+      `;
+    }
+
+    return `<li data-id="${cond.id}" class = "bordered-item" style="text-align: right;">
+      ${logicDropdown}
+      <button type="button" onclick="openParameterPopup('${groupId}', '${cond.id}')"
+          class="btn btn-sm me-2 mb-1"
+          style="width: 220px; background-color: rgb(224, 242, 255);">
+        ${getParameterNameById(cond.parameter) || "Select Parameter"}
+      </button>
+      ${renderOperatorDropdown(groupId, cond.id, cond.parameter, cond.operator)}
+      ${renderValueInput(cond, groupId)}
+      <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
+    </li>`;
+  }
+
+  function renderOperatorDropdown(groupId, condId, paramId, selectedOp) {
+    const type = getParameterTypeById(paramId);
+    const ops = OPERATORS_BY_TYPE[type] || OPERATORS_BY_TYPE.default;
+
+    let html = `<select onchange="updateCondition('${groupId}', '${condId}', 'operator', this.value)" class="form-select btn-sm d-inline me-2 mb-1" style="width: 220px; background-color: rgb(209, 241, 245); ">`;
+    html += `<option value="">-- Select Operator --</option>`;
+    ops.forEach(op => {
+      html += `<option value="${op}" ${selectedOp === op ? "selected" : ""}>${op}</option>`;
+    });
+    html += `</select>`;
+    return html;
+  }
+
+  function renderValueInput(cond, groupId) {
+    const type = getParameterTypeById(cond.parameter);
+    const operator = cond.operator;
+
+    const valueInput = (val, index = "") => `
+      <input type="${type === 'date' ? 'date' : (type === 'integer' || type === 'float' ? 'number' : 'text')}"
+            value="${val || ""}"
+            oninput="updateCondition('${groupId}', '${cond.id}', 'value${index}', this.value)"
+            class="form-control form-control-sm d-inline me-2 mb-1 rounded shadow-sm"
+            style="width: 150px; background-color: rgb(253, 206, 239);" />
+    `;
+
+    if (operator === "IS_INCLUDED" || operator === "IS_EXCLUDED") {
+      return `
+        <input type="file" accept=".csv,.xlsx" 
+              onchange="handleValueFileUpload(event, '${groupId}', '${cond.id}')"
+              class="form-control form-control-sm d-inline me-2 mb-1" 
+              style="width: 220px; background-color: rgb(253, 206, 239);" />
+        <span class="text-muted small" style="font-size: 11px; background-color: rgb(253, 206, 239);">.csv/.xlsx (1 column)</span>
+      `;
+    }
+    if (operator === "EXISTS" || operator === "DOES_NOT_EXIST") {
+      return ""; // no input
+    }
+
+    if (operator === "IS_BETWEEN") {
+      // support value0 and value1
+      cond.value0 = cond.value0 || "";
+      cond.value1 = cond.value1 || "";
+      return valueInput(cond.value0, "0") + valueInput(cond.value1, "1");
+    }
+
+    return valueInput(cond.value);
+  }
+
+  function handleValueFileUpload(event, groupId, condId) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      let values = [];
+      if (file.name.endsWith(".csv")) {
+        const lines = e.target.result.split(/\r?\n/).filter(x => x.trim());
+        values = lines.map(x => x.trim()).filter(x => x !== "");
+      } else {
+        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        values = XLSX.utils.sheet_to_json(sheet, { header: 1 }).map(row => row[0]).filter(Boolean);
+      }
+
+      const group = findGroupById(queryTree, groupId);
+      if (!group) return;
+
+      const cond = group.children.find(c => c.id === condId);
+      if (!cond) return;
+
+      cond.value = values.join(","); // Store as comma-separated string
+      toastr("Uploaded " + values.length + " values.", "success");
+    };
+
+    if (file.name.endsWith(".csv")) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsBinaryString(file);
+    }
+  }
+
+
+  function getParameterNameById(id) {
+    const found = flattenParameters().find(p => p.id == id);
+    return found ? found.name : null;
+  }
+
+  function openParameterPopup(groupId, condId) {
+    parameterSelectTarget = { groupId, condId };
+    renderParameterPopup();  // initial render
+    const modal = new bootstrap.Modal(document.getElementById("parameterSelectModal"));
+    modal.show();
+  }
+
+  function renderParameterPopup(filterText = "") {
+    const container = document.getElementById("parameter-popup-list");
+    container.innerHTML = "";
+
+    parameters.forEach((cat, catIndex) => {
+      const catId = `popup-cat-${catIndex}`;
+      const catCollapseId = `popup-collapse-${catId}`;
+
+      const catDiv = document.createElement("div");
+      catDiv.className = "mb-2";
+
+      // Category Header with Toggle Button
+      catDiv.innerHTML = `
+        <div class="d-flex align-items-center fw-bold mb-1">
+          <button class="btn btn-sm toggle-btn me-2" onclick="toggleDisplay('${catCollapseId}', this)">&#x25BC;</button>
+          <span>${cat.name}</span>
+        </div>
+      `;
+
+      const catContent = document.createElement("div");
+      catContent.id = catCollapseId;
+      catContent.style.display = "block";
+      catContent.className = "ms-3";
+
+      cat.subcategories.forEach((sub, subIndex) => {
+        const subId = `${catId}-sub-${subIndex}`;
+        const subCollapseId = `popup-sub-collapse-${subId}`;
+
+        const subDiv = document.createElement("div");
+        subDiv.className = "mb-1";
+
+        subDiv.innerHTML = `
+          <div class="d-flex align-items-center ms-2 mb-1">
+            <button class="btn btn-sm toggle-btn me-2" onclick="toggleDisplay('${subCollapseId}', this)">&#x25BC;</button>
+            <em>${sub.name}</em>
+          </div>
+        `;
+
+        const subContent = document.createElement("div");
+        subContent.id = subCollapseId;
+        subContent.style.display = "block";
+        subContent.className = "ms-3";
+
+        sub.parameters.forEach(param => {
+          if (!filterText || param.name.toLowerCase().includes(filterText.toLowerCase())) {
+            const pItem = document.createElement("div");
+            pItem.className = "ms-4 my-1 text-primary";
+            pItem.style.cursor = "pointer";
+            pItem.innerText = param.name;
+            pItem.onclick = () => selectParameter(param.id);
+            subContent.appendChild(pItem);
+          }
+        });
+
+        subDiv.appendChild(subContent);
+        catContent.appendChild(subDiv);
+      });
+
+      catDiv.appendChild(catContent);
+      container.appendChild(catDiv);
+    });
+  }
+
+
+  function selectParameter(paramId) {
+    const { groupId, condId } = parameterSelectTarget;
+    const group = findGroupById(queryTree, groupId);
+    if (!group) return;
+
+    const cond = group.children.find(c => c.id === condId);
+    if (!cond) return;
+
+    cond.parameter = paramId;
+
+    const modal = bootstrap.Modal.getInstance(document.getElementById("parameterSelectModal"));
+    modal.hide();
+
+    renderBuilder(); // re-render to show the selected name
+  }
+
+  function filterParameterPopup(text) {
+    renderParameterPopup(text);
+  }
+
+
+  function updateGroupLogic(groupId, logic) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      group.logic = logic;
+      renderBuilder();
+    }
+  }
+
+  function flattenParameters() {
+    let flat = [];
+    parameters.forEach(cat =>
+      cat.subcategories.forEach(sub =>
+        sub.parameters.forEach(param =>
+          flat.push({
+            ...param,
+            subcategory: sub.name,
+            category: cat.name
+          })
+        )
+      )
+    );
+    return flat;
+  }
+
+
+  function findGroupById(tree, id) {
+    if (tree.id === id) return tree;
+    for (const child of tree.children) {
+      if (child.type === 'group') {
+        const found = findGroupById(child, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function changeLogic(groupId, logic) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      group.logic = logic;
+      renderBuilder();
+    }
+  }
+
+  function addCondition(groupId) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      group.children.push(createCondition());
+      renderBuilder();
+    }
+  }
+
+  function deleteCondition(groupId, condId) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      group.children = group.children.filter(c => c.id !== condId);
+      renderBuilder();
+    }
+  }
+
+  function updateCondition(groupId, condId, key, value) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      const cond = group.children.find(c => c.id === condId);
+      if (cond) {
+        if (key === "value0" || key === "value1") {
+          cond[key] = value;
+        } else {
+          cond[key] = value;
+        }
+        if (key === "operator" || key === "parameter") {
+          renderBuilder(); // 🔁 Force UI update when operator or parameter changes
+        }
+      }
+    }
+  }
+
+  function addGroup(groupId) {
+    const group = findGroupById(queryTree, groupId);
+    if (group) {
+      group.children.push(createGroup());
+      renderBuilder();
+    }
+  }
+
+  function deleteGroup(groupId) {
+    if (queryTree.id === groupId) return alert("Cannot delete root group.");
+    const recursiveDelete = (parent) => {
+      parent.children = parent.children.filter(c => {
+        if (c.type === 'group') {
+          if (c.id === groupId) return false;
+          recursiveDelete(c);
+        }
+        return true;
+      });
+    };
+    recursiveDelete(queryTree);
+    renderBuilder();
+  }
+
+  function ungroupGroup(groupId) {
+    if (queryTree.id === groupId) {
+      alert("Cannot ungroup the root group.");
+      return;
+    }
+
+    const recursiveUngroup = (parent) => {
+      parent.children = parent.children.flatMap(child => {
+        if (child.type === 'group' && child.id === groupId) {
+          // Spread the subgroup's children into the parent
+          return child.children;
+        } else {
+          return [child];
+        }
+      });
+
+      // Continue recursively for nested groups
+      parent.children.forEach(child => {
+        if (child.type === 'group') {
+          recursiveUngroup(child);
+        }
+      });
+    };
+
+    recursiveUngroup(queryTree);
+    renderBuilder();
+  }
+
+  function runQuery() {
+    console.log(getSelectedOutputParameters());
+    {% comment %} if (getSelectedOutputParameters().length === 0) {
+      toastr("Please select at least one output parameter.", "error");
+      return;
+    } {% endcomment %}
+    fetch('/run-query/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+      },
+      body: JSON.stringify({
+        query: queryTree,
+        output_parameters: Array.from(new Set([
+          ...getSelectedOutputParameters().map(Number),
+          ...extractUsedParams(queryTree)
+        ]))
+      })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === "success") {
+        displayResults(data.columns, data.results);
+        updateRecordCount(data.results.length, data.unique_count || 0);
+      } else {
+        alert("Query failed: " + data.message);
+      }
+    });
+  }
+
+  function openExportModal() {
+    document.getElementById("exportQueryNameInput").value = currentQueryName || "";
+    const modal = new bootstrap.Modal(document.getElementById("exportQueryModal"));
+    modal.show();
+  }
+
+  function exportQueryWithName() {
+    const name = document.getElementById("exportQueryNameInput").value.trim();
+    if (!name) {
+      alert("Please enter a file name.");
+      return;
+    }
+
+    currentQueryName = name;
+    document.getElementById("current-query-title").textContent = `Query Builder – ${currentQueryName}`;
+
+    const data = {
+      query: queryTree,
+      output_parameters: Array.from(new Set([
+        ...getSelectedOutputParameters().map(Number),
+        ...extractUsedParams(queryTree)
+      ]))
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const safeFileName = currentQueryName.trim().replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeFileName}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    bootstrap.Modal.getInstance(document.getElementById("exportQueryModal")).hide();
+  }
+
+
+  function importQueryFromFile(event) {
+    const file = event.target.files[0];
+    const filename = file.name.replace(/\.[^/.]+$/, ""); // Remove .json/.txt/etc.
+    currentQueryName = filename;
+    document.getElementById("current-query-title").textContent = `Query Builder – ${currentQueryName}`;
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = JSON.parse(e.target.result);
+        queryTree = data.query;
+        renderBuilder();
+
+        const outputIDs = data.output_parameters || [];
+        selectOutputParameterCheckboxes(outputIDs);
+        toastr("Query imported successfully!", "success");
+      } catch (err) {
+        alert("Failed to import query. Invalid JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function selectOutputParameterCheckboxes(ids) {
+    document.querySelectorAll('.output-param-checkbox').forEach(cb => {
+      cb.checked = ids.includes(parseInt(cb.value));
+    });
+  }
+
+  function extractUsedParams(group) {
+    let ids = [];
+    group.children.forEach(child => {
+      if (child.type === 'condition' && child.parameter) {
+        ids.push(parseInt(child.parameter));
+      } else if (child.type === 'group') {
+        ids.push(...extractUsedParams(child));
+      }
+    });
+    return ids;
+  }
+
+  function updateRecordCount(total, unique) {
+    const label = document.getElementById("record-count-label");
+    label.innerHTML = `
+      <i class="fas fa-database me-1"></i>
+      <strong>${total}</strong> records found,
+      <strong>${unique}</strong> unique patients
+    `;
+  }
+
+  function displayResults(columns, rows) {
+    const container = document.getElementById('query-results');
+    if (!rows.length) {
+      container.innerHTML = "<p>No results found.</p>";
+      return;
+    }
+
+    let table = `<table class="table table-bordered table-sm table-striped"><thead><tr>`;
+    columns.forEach(col => table += `<th>${col}</th>`);
+    table += `</tr></thead><tbody>`;
+
+    rows.forEach(row => {
+      table += "<tr>";
+      columns.forEach(col => {
+        table += `<td>${row[col]}</td>`;
+      });
+      table += "</tr>";
+    });
+
+    table += "</tbody></table>";
+    container.innerHTML = table;
+  }
+
+  function submitQuery() {
+    const modal = new bootstrap.Modal(document.getElementById("saveQueryModal"));
+    modal.show();
+  }
+
+  function submitQueryFromModal() {
+    const name = document.getElementById("queryNameInput").value.trim();
+    if (!name) {
+      alert("Please enter a query name.");
+      return;
+    }
+
+    fetch('/save-query-structure/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+      },
+      body: JSON.stringify({
+        name: name,
+        query: queryTree,
+        output_parameters: getSelectedOutputParameters()
+      })
+    }).then(res => res.json()).then(data => {
+      if (data.status === "success") {
+        currentQueryName = name;
+        document.getElementById("current-query-title").textContent = `Query Builder – ${currentQueryName}`;
+        document.getElementById("queryNameInput").value = "";
+        bootstrap.Modal.getInstance(document.getElementById("saveQueryModal")).hide();
+        toastr("Query saved successfully", "success");
+      } else {
+        alert("Failed to save query.");
+      }
+    });
+  }
+
+  function hideSaveSuccessMessage() {
+    const msg = document.getElementById("save-success-message");
+    msg.classList.add("d-none");
+    msg.classList.remove("show");
+  }
+
+  function loadQuery() {
+    fetch('/list-queries/')
+      .then(res => res.json())
+      .then(data => {
+        const list = document.getElementById("saved-query-list");
+        list.innerHTML = "";
+
+        data.forEach(query => {
+          const li = document.createElement("li");
+          li.className = "list-group-item list-group-item-action";
+          li.style.cursor = "pointer";
+          li.innerText = query.name + " (ID: " + query.id + ")";
+          li.onclick = () => {
+            fetch(`/load-query/${query.id}/`)
+              .then(res => res.json())
+              .then(queryData => {
+                // queryTree = queryData;
+                // flatten if wrapped root group
+                if (
+                  queryData.children.length === 1 &&
+                  queryData.children[0].type === "group"
+                ) {
+                  queryTree = queryData.children[0];
+                } else {
+                  queryTree = queryData;
+                }
+                currentQueryName = query.name;
+                document.getElementById("current-query-title").textContent = `Query Builder – ${currentQueryName}`;
+                renderBuilder();
+                bootstrap.Modal.getInstance(document.getElementById("loadQueryModal")).hide();
+                toastr("Query loaded successfully!", "success");
+              });
+          };
+          list.appendChild(li);
+        });
+
+        const modal = new bootstrap.Modal(document.getElementById("loadQueryModal"));
+        modal.show();
+      });
+  }
+
+
+  function exportToCSV() {
+    const table = document.querySelector("#query-results table");
+    if (!table) {
+      alert("No results to export.");
+      return;
+    }
+
+    let csv = [];
+    const rows = table.querySelectorAll("tr");
+    rows.forEach(row => {
+      const cols = Array.from(row.querySelectorAll("th, td")).map(cell =>
+        '"' + cell.textContent.replace(/"/g, '""') + '"'
+      );
+      csv.push(cols.join(","));
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "query_results.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  let cachedParameters = [];
+
+  function renderOutputParameters(filterText = "") {
+    const container = document.querySelector("#output-parameters-list");
+    container.innerHTML = "";
+    cachedParameters = [];
+
+    parameters.forEach((cat, cIndex) => {
+      const catId = `cat-${cIndex}`;
+      const catCheckboxId = `cat-checkbox-${catId}`;
+      const catCollapseId = `cat-collapse-${catId}`;
+
+      // Create category block
+      const catDiv = document.createElement("div");
+      catDiv.className = "category-block";
+
+      // Category header row
+      const catHeader = document.createElement("div");
+      catHeader.className = "d-flex align-items-center";
+      catHeader.innerHTML = `
+        <button class="btn btn-sm toggle-btn me-1" onclick="toggleDisplay('${catCollapseId}', this)">&#x25BC;</button>
+        <div class="form-check mb-0">
+          <input type="checkbox" class="form-check-input" id="${catCheckboxId}"
+                onchange="toggleCategory('${cat.name}', this.checked)">
+          <label class="form-check-label fw-bold ms-1" for="${catCheckboxId}">${cat.name}</label>
+        </div>
+      `;
+
+      // Category content container
+      const catContent = document.createElement("div");
+      catContent.id = catCollapseId;
+      catContent.style.display = "block";
+      catContent.className = "ms-3";
+
+      // Loop subcategories
+      cat.subcategories.forEach((sub, sIndex) => {
+        const subId = `${catId}-sub-${sIndex}`;
+        const subCheckboxId = `sub-checkbox-${subId}`;
+        const subCollapseId = `sub-collapse-${subId}`;
+
+        const subDiv = document.createElement("div");
+        subDiv.className = "subcategory-block";
+
+        // Subcategory header
+        const subHeader = document.createElement("div");
+        subHeader.className = "d-flex align-items-center ms-3";
+        subHeader.innerHTML = `
+          <button class="btn btn-sm toggle-btn me-1" onclick="toggleDisplay('${subCollapseId}', this)">&#x25BC;</button>
+          <div class="form-check mb-0">
+            <input type="checkbox" class="form-check-input" id="${subCheckboxId}"
+                  onchange="toggleSubcategory('${cat.name}', '${sub.name}', this.checked)">
+            <label class="form-check-label fw-semibold ms-1" for="${subCheckboxId}">${sub.name}</label>
+          </div>
+        `;
+
+        // Subcategory content
+        const subContent = document.createElement("div");
+        subContent.id = subCollapseId;
+        subContent.style.display = "block";
+        subContent.className = "ms-3";
+
+        // Parameters
+        sub.parameters.forEach(param => {
+          if (!filterText || param.name.toLowerCase().includes(filterText.toLowerCase())) {
+            const paramDiv = document.createElement("div");
+            paramDiv.className = "form-check parameter-checkbox";
+            paramDiv.innerHTML = `
+              <input type="checkbox" class="form-check-input output-param-checkbox"
+                    value="${param.id}" id="output-${param.id}">
+              <label class="form-check-label" for="output-${param.id}">${param.name}</label>
+            `;
+            // Add change listener to update live output display
+            paramDiv.querySelector("input").addEventListener("change", updateSelectedOutputDisplay);
+            subContent.appendChild(paramDiv);
+
+            cachedParameters.push({ ...param, catName: cat.name, subName: sub.name });
+          }
+        });
+
+        subDiv.appendChild(subHeader);
+        subDiv.appendChild(subContent);
+        catContent.appendChild(subDiv);
+      });
+
+      catDiv.appendChild(catHeader);
+      catDiv.appendChild(catContent);
+      container.appendChild(catDiv);
+    });
+    updateSelectedOutputDisplay();
+  }
+
+  function toggleDisplay(id, btn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const isHidden = el.style.display === "none";
+    el.style.display = isHidden ? "block" : "none";
+    btn.innerHTML = isHidden ? "&#x25BC;" : "&#x25B6;";
+  }
+
+
+  function toggleCategory(categoryName, isChecked) {
+    cachedParameters.forEach(param => {
+      if (param.catName === categoryName) {
+        const checkbox = document.getElementById("output-" + param.id);
+        if (checkbox) checkbox.checked = isChecked;
+      }
+    });
+    updateSelectedOutputDisplay();
+
+  }
+
+  function toggleSubcategory(categoryName, subName, isChecked) {
+    cachedParameters.forEach(param => {
+      if (param.catName === categoryName && param.subName === subName) {
+        const checkbox = document.getElementById("output-" + param.id);
+        if (checkbox) checkbox.checked = isChecked;
+      }
+    });
+    updateSelectedOutputDisplay();
+
+  }
+
+
+  function filterOutputParameters(text) {
+    renderOutputParameters(text);
+  }
+
+  function selectAllOutputCheckboxes(master) {
+    const checkboxes = document.querySelectorAll('.output-param-checkbox');
+    checkboxes.forEach(cb => cb.checked = master.checked);
+    updateSelectedOutputDisplay();
+
+  }
+
+  function selectAllOutputParameters() {
+    document.querySelectorAll('.output-param-checkbox').forEach(cb => cb.checked = true);
+  }
+
+  function getSelectedOutputParameters() {
+    return Array.from(document.querySelectorAll('.output-param-checkbox:checked'))
+                .map(cb => cb.value);
+  }
+
+  function selectGroupParameters(categoryName, subcategoryName = null) {
+    cachedParameters.forEach(param => {
+      if (
+        param.catName === categoryName &&
+        (subcategoryName === null || param.subName === subcategoryName)
+      ) {
+        const checkbox = document.getElementById("output-" + param.id);
+        if (checkbox) checkbox.checked = true;
+      }
+    });
+  }
+
+  function updateSelectedOutputDisplay() {
+    const selected = getSelectedOutputParameters();
+    const displayContainer = document.getElementById("selected-output-names");
+    displayContainer.innerHTML = ""; // clear current
+
+    const names = selected
+      .map(id => cachedParameters.find(p => p.id == id))
+      .filter(Boolean);
+
+    if (names.length === 0) {
+      displayContainer.innerHTML = "<small class='text-muted'>None selected</small>";
+      return;
+    }
+
+    names.forEach(param => {
+      const badge = document.createElement("span");
+      badge.className = "badge bg-primary d-flex align-items-center";
+      badge.style.gap = "6px";
+
+      badge.innerHTML = `
+        ${param.name}
+        <button class="btn-close btn-close-white btn-sm ms-1" 
+                style="font-size: 8px; opacity: 0.8;"
+                onclick="deselectOutputParam(${param.id})"></button>
+      `;
+
+      displayContainer.appendChild(badge);
+    });
+  }
+
+  function deselectOutputParam(id) {
+    const checkbox = document.getElementById("output-" + id);
+    if (checkbox) {
+      checkbox.checked = false;
+      updateSelectedOutputDisplay();
+    }
+  }
+
+  function clearSelectedOutputs() {
+    document.querySelectorAll('.output-param-checkbox').forEach(cb => cb.checked = false);
+    updateSelectedOutputDisplay();
+  }
+
+
+  renderBuilder();
+  renderOutputParameters();
+
+  function initSortable() {
+    document.querySelectorAll('.condition-list').forEach(ul => {
+      new Sortable(ul, {
+        animation: 150,
+        handle: 'li',
+        onEnd: function (evt) {
+          const groupId = ul.dataset.group;
+          const group = findGroupById(queryTree, groupId);
+
+          if (!group) return;
+
+          // Reorder group.children according to new DOM order
+          const newOrder = [...ul.children].map(li => li.dataset.id);
+          const newChildren = [];
+
+          newOrder.forEach(id => {
+            const found = group.children.find(child => child.id == id);
+            if (found) newChildren.push(found);
+          });
+
+          // Update the group's children array
+          group.children = newChildren;
+          renderBuilder();
+        }
+      });
+    });
+  }
+
+  function toastr(message, type = "success") {
+    const container = document.getElementById("toast-container");
+
+    const toast = document.createElement("div");
+    toast.className = `toast-alert toast-${type}`;
+    toast.innerHTML = `
+      <span>${message}</span>
+      <button type="button" class="btn-close btn-close-white float-end ms-3" onclick="this.parentElement.remove()" aria-label="Close"></button>
+    `;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      if (toast && toast.parentElement) {
+        toast.remove();
+      }
+    }, 2500);
+  }
+
+</script>
+
+<style>
+  .bordered-item {
+    border: 1px dashed #ccc;
+    border-radius: 6px;
+    padding: 5px;
+    background-color: #fefefe;
+  }
+  .bordered-item:hover {
+    background-color: #f8f9fa;
+    border-color: #999;
+  }
+  
+  #output-panel {
+    background-color: #e0f3ff;
+    border-radius: 20px;
+    padding: 12px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: sans-serif;
+  }
+
+  .category-block {
+    margin-bottom: 10px;
+  }
+
+  .subcategory-block {
+    margin-left: 20px;
+    margin-bottom: 5px;
+  }
+
+  .parameter-checkbox {
+    margin-left: 40px;
+  }
+
+  .output-header {
+    font-weight: bold;
+    font-size: 14px;
+    text-align: center;
+    margin-bottom: 10px;
+  }
+
+  .search-bar {
+    width: 80%;
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    margin-left: 10%;
+    margin-bottom: 10px;
+    font-style: italic;
+    color: gray;
+  }
+  
+  .form-check-label {
+    cursor: pointer;
+  }
+  .form-check-input {
+    cursor: pointer;
+  }
+  .toggle-btn {
+    outline: none;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .toggle-btn:focus {
+    outline: none;
+  }
+  #output-panel {
+    background-color: #e0f3ff;
+    border-radius: 20px;
+    padding: 12px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: sans-serif;
+    font-size: 13px;
+  }
+
+  .category-block,
+  .subcategory-block,
+  .parameter-checkbox {
+    font-size: 13px;
+    margin-left: -6px; /* 🔧 Reduced from larger indent */
+  }
+
+  .subcategory-block {
+    margin-left: -17px !important; /* was 20+, now shorter */
+  }
+
+  .parameter-checkbox {
+    margin-left: 32px !important; /* was 40px+, now tighter */
+  }
+
+  .form-check-label {
+    font-size: 13px;
+  }
+
+  .form-check-input {
+    transform: scale(0.85);
+    margin-top: 3px;
+  }
+{% comment %} 
+  .btn-outline-secondary {
+    font-size: 12px;
+    padding: 1px 5px;
+  } {% endcomment %}
+
+  .search-bar {
+    font-size: 12px;
+    padding: 4px 6px;
+  }
+
+  .output-header {
+    font-size: 14px;
+  }
+
+  .toast-alert {
+    position: relative;
+    background-color: #333;
+    color: white;
+    padding: 12px 16px 12px 20px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    min-width: 220px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+    animation: fadein 0.3s ease, fadeout 0.3s ease 2.7s;
+  }
+  
+  .toast-success { background-color: #198754; }
+  .toast-error { background-color: #dc3545; }
+  
+  .btn-close-white {
+    filter: brightness(0) invert(1);
+    opacity: 0.9;
+  }
+  
+  @keyframes fadein {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  
+  @keyframes fadeout {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background:rgb(129, 129, 129);  /* dark background for track */
+    border-radius: 10px;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background-color: #666;  /* scrollbar color */
+    border-radius: 10px;     /* ✅ rounded corners */
+    border: 2px solid rgb(129, 129, 129);
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #999;
+  }
+
+  #parameterSelectModal .modal-content {
+    background-color: rgb(224, 242, 255); /* Match parameter control */
+  }
+
+  .run-query-btn {
+    background: transparent;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 10px 72px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .run-query-btn:hover .play-icon {
+    color: #58d138;
+    transform: scale(1.1);
+  }
+  
+  .play-icon {
+    font-size: 26px;
+    color: #6cc24a;
+    text-shadow: 0px 0px 6px rgba(0, 0, 0, 0.3);
+  }
+  
+  select.form-select.logic-control {
+    background-color: #002244; /* dark navy */
+    color: white;
+    border: 1px solid #001933;
+  }
+
+  /* Custom Dropdown Style (dark navy with white arrow) */
+  select.form-select.logic-control {
+    background-color: #001f3f; /* Dark navy */
+    color: white;
+    border: none;
+    padding-right: 2rem;
+    font-weight: bold;
+
+    /* Remove native arrow */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+
+    /* Add white custom arrow (▼) */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='white' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 10px 6px;
+  }
+
+  select.form-select.logic-control option {
+    background-color: #ffffff; /* dropdown background */
+    color: black;
+  }
+
+  /* Optional: hover/focus */
+  select.form-select.logic-control:focus {
+    outline: 2px solid #004080;
+  }
+
+
+  .custom-operator-btn {
+    background-color: #001f3f;
+    color: #fff;
+    border: none;
+  }
+  .custom-operator-btn:hover {
+    background-color: #003366;
+    color: #fff;
+  }
+
+  .btn-dark-gray {
+    background-color: #444;
+    color: white;
+    border: none;
+    font-weight: bold;
+  }
+  
+  .btn-dark-gray:hover {
+    background-color: #666;
+    color: white;
+  }
+  
+  .btn-dark-gray:active {
+    background-color: #222;
+    color: white;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.3);
+  }
+
+
+</style>
+
+<!-- Parameter Selection Modal -->
+<div class="modal fade" id="parameterSelectModal" tabindex="-1" aria-labelledby="parameterModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="parameterModalLabel">Select a Parameter</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+
+        <input type="text" placeholder="Search..." class="form-control form-control-sm mb-3" oninput="filterParameterPopup(this.value)" style=" background-color: rgb(224, 242, 255);">
+
+        <div id="parameter-popup-list" style="max-height: 400px; overflow-y: auto;"></div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Save Query Modal -->
+<div class="modal fade" id="saveQueryModal" tabindex="-1" aria-labelledby="saveQueryModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <h5 class="modal-title" id="saveQueryModalLabel">Save Query</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="queryNameInput" class="form-control" placeholder="Enter query name">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" onclick="submitQueryFromModal()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Load Query Modal -->
+<div class="modal fade" id="loadQueryModal" tabindex="-1" aria-labelledby="loadQueryModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <h5 class="modal-title" id="loadQueryModalLabel">Load Saved Query</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <ul id="saved-query-list" class="list-group">
+          <!-- Query buttons injected here -->
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Export Query Modal -->
+<div class="modal fade" id="exportQueryModal" tabindex="-1" aria-labelledby="exportQueryModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <h5 class="modal-title" id="exportQueryModalLabel">Export Query</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="exportQueryNameInput" class="form-control" placeholder="Enter export file name">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="exportQueryWithName()">Export</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+

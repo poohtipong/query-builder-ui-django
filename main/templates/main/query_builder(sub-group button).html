@@ -1,0 +1,453 @@
+
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+
+<div class="row">
+  <!-- Left Panel: Menu + Output Parameters -->
+  <div class="col-md-3">
+
+    <!-- Menu Card -->
+    <div class="card shadow-sm border mb-4">
+      <div class="card-header bg-light fw-bold">
+        Menu
+      </div>
+      <div class="card-body">
+        {% comment %} <h6 class="text-primary"><i class="bi bi-diagram-3"></i> Query Builder</h6> {% endcomment %}
+        <div class="d-grid gap-2">
+          <button onclick="submitQuery()" class="btn btn-success">
+            <i class="fas fa-save"></i> Save Query
+          </button>
+          <button onclick="loadQuery()" class="btn btn-outline-secondary">
+            <i class="fas fa-folder"></i> Load Query
+          </button>
+          <button onclick="runQuery()" class="btn btn-primary">
+            <i class="fas fa-play"></i> Run Query
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output Parameters Card -->
+    <div class="card shadow-sm border">
+      <div class="card-header bg-light fw-bold">
+        Output Parameters
+      </div>
+      <div class="card-body">
+        <!-- You can dynamically inject checkboxes or a multi-select component here -->
+        <p class="text-muted">Choose which parameters to include in output.</p>
+        <!-- Example placeholder -->
+        <div>
+          <input type="checkbox" id="param1"> <label for="param1">Patient ID</label><br>
+          <input type="checkbox" id="param2"> <label for="param2">Study Type</label><br>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Panel: Query Builder + Results -->
+  <div class="col-md-9">
+
+    <!-- Builder Container Card -->
+    <div class="card shadow-sm border mb-4">
+      <div class="card-header bg-light fw-bold">
+        Query Builder
+      </div>
+      <div class="card-body">
+        <div id="builder-container"></div>
+      </div>
+    </div>
+
+    <!-- Query Results Card -->
+    <div class="card shadow-sm border mt-4">
+      <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
+        <span>Query Results</span>
+        <button onclick="exportToCSV()" class="btn btn-sm btn-outline-primary">
+          <i class="fas fa-file-csv"></i> Export CSV
+        </button>
+      </div>
+      <div id="query-results" class="card-body">
+        <!-- Results will be rendered here -->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script id="parameter-data" type="application/json">
+  {{ structured_categories|safe }}
+</script>
+
+<script>
+const parameters = JSON.parse(document.getElementById("parameter-data").textContent);
+const builderContainer = document.getElementById("builder-container");
+
+function createCondition() {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "condition",
+    parameter: null,
+    operator: null,
+    value: ""
+//  logic: "AND"  // 👈 new
+  };
+}
+
+
+function createGroup(withLogic = true) {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "group",
+    logic: withLogic ? "AND" : null,  // ❗ root group has no logic
+    children: [createCondition()]
+  };
+}
+
+let queryTree = createGroup(false);  // no logic on root
+
+function renderBuilder() {
+  builderContainer.innerHTML = renderGroup(queryTree);
+  initSortable(); // 💡 Initialize drag-drop
+}
+
+function renderGroup(group) {
+  const isRoot = group.logic === null;
+  const alignStyle = isRoot ? 'text-align: left;' : 'text-align: right;';
+  let html = `<div class="group" data-id="${group.id}">`;
+
+  if (group.logic !== null) {
+    html += `
+      <select onchange="updateGroupLogic('${group.id}', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px; text-align: left;">
+        <option value="AND" ${group.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${group.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="AND NOT" ${group.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  html +=`
+    <ul class="condition-list" data-group="${group.id}">
+  `;
+
+  group.children.forEach((child, index) => {
+    if (child.type === 'condition') {
+      html += renderCondition(child, group.id, index);
+    } else if (child.type === 'group') {
+      html += `<li data-id="${child.id}" class = "bordered-item">${renderGroup(child)}</li>`;
+    }
+  });
+  
+  html += "</ul>";
+
+  html += `
+    <div></div>
+    <button onclick="addCondition('${group.id}')" class="btn btn-sm btn-outline-primary me-1" style="text-align: left;"><i class="fas fa-plus"></i> Patient/Study Criteria</button>
+    <button onclick="addGroup('${group.id}')" class="btn btn-sm btn-outline-secondary me-1" style="text-align: left;"><i class="fas fa-plus"></i> Criteria-Group</button>
+    ${group.logic !== null ? `
+      <button onclick="ungroupGroup('${group.id}')" class="btn btn-sm btn-outline-warning">Ungroup</button>
+      <button onclick="deleteGroup('${group.id}')" class="btn btn-sm btn-danger" style="text-align: left;"><i class="fas fa-times"></i></button>
+      ` : ''}
+  `;
+
+
+  html += "</div>";
+  return html;
+}
+
+function renderCondition(cond, groupId, index) {
+  const group = findGroupById(queryTree, groupId);
+  // const index = group.children.findIndex(c => c.id === cond.id);
+
+  let logicDropdown = '';
+  if (index > 0) {
+    logicDropdown = `
+      <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px;">
+        <option value="AND" ${cond.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${cond.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="AND NOT" ${cond.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  return `<li data-id="${cond.id}" class = "bordered-item" style="text-align: right;">
+    ${logicDropdown}
+    <select onchange="updateCondition('${groupId}', '${cond.id}', 'parameter', this.value)" class="form-select d-inline me-2 mb-1" style="width: 220px;">
+      <option value="">-- Select Parameter --</option>
+      ${flattenParameters().map(p => `<option value="${p.id}" ${cond.parameter == p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+    </select>
+    <select onchange="updateCondition('${groupId}', '${cond.id}', 'operator', this.value)" class="form-select d-inline me-2 mb-1" style="width: 220px;">
+      <option value="">-- Select Operator --</option>
+      <option ${cond.operator === 'IS_EQUAL_TO' ? 'selected' : ''}>IS_EQUAL_TO</option>
+      <option ${cond.operator === 'IS_NOT_EQUAL_TO' ? 'selected' : ''}>IS_NOT_EQUAL_TO</option>
+      <option ${cond.operator === 'CONTAINS' ? 'selected' : ''}>CONTAINS</option>
+      <option ${cond.operator === 'DOES_NOT_CONTAIN' ? 'selected' : ''}>DOES_NOT_CONTAIN</option>
+      <option ${cond.operator === 'STARTS_WITH' ? 'selected' : ''}>STARTS_WITH</option>
+      <option ${cond.operator === 'ENDS_WITH' ? 'selected' : ''}>ENDS_WITH</option>
+      <option ${cond.operator === 'IS_BETWEEN' ? 'selected' : ''}>IS_BETWEEN</option>
+      <option ${cond.operator === 'EXISTS' ? 'selected' : ''}>EXISTS</option>
+      <option ${cond.operator === 'DOES_NOT_EXIST' ? 'selected' : ''}>DOES_NOT_EXIST</option>
+    </select>
+    <input type="text" value="${cond.value}" oninput="updateCondition('${groupId}', '${cond.id}', 'value', this.value)" class="form-control form-control-sm d-inline me-2 mb-1 rounded shadow-sm" style="width: 220px;" placeholder="Value..." />
+    <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
+  </li>`;
+}
+
+function updateGroupLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function flattenParameters() {
+  let flat = [];
+  parameters.forEach(cat =>
+    cat.subcategories.forEach(sub =>
+      sub.parameters.forEach(param =>
+        flat.push({
+          ...param,
+          subcategory: sub.name,
+          category: cat.name
+        })
+      )
+    )
+  );
+  return flat;
+}
+
+
+function findGroupById(tree, id) {
+  if (tree.id === id) return tree;
+  for (const child of tree.children) {
+    if (child.type === 'group') {
+      const found = findGroupById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function changeLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function addCondition(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createCondition());
+    renderBuilder();
+  }
+}
+
+function deleteCondition(groupId, condId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children = group.children.filter(c => c.id !== condId);
+    renderBuilder();
+  }
+}
+
+function updateCondition(groupId, condId, key, value) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    const cond = group.children.find(c => c.id === condId);
+    if (cond) {
+      cond[key] = value;
+    }
+  }
+}
+
+function addGroup(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createGroup());
+    renderBuilder();
+  }
+}
+
+function deleteGroup(groupId) {
+  if (queryTree.id === groupId) return alert("Cannot delete root group.");
+  const recursiveDelete = (parent) => {
+    parent.children = parent.children.filter(c => {
+      if (c.type === 'group') {
+        if (c.id === groupId) return false;
+        recursiveDelete(c);
+      }
+      return true;
+    });
+  };
+  recursiveDelete(queryTree);
+  renderBuilder();
+}
+
+function ungroupGroup(groupId) {
+  if (queryTree.id === groupId) {
+    alert("Cannot ungroup the root group.");
+    return;
+  }
+
+  const recursiveUngroup = (parent) => {
+    parent.children = parent.children.flatMap(child => {
+      if (child.type === 'group' && child.id === groupId) {
+        // Spread the subgroup's children into the parent
+        return child.children;
+      } else {
+        return [child];
+      }
+    });
+
+    // Continue recursively for nested groups
+    parent.children.forEach(child => {
+      if (child.type === 'group') {
+        recursiveUngroup(child);
+      }
+    });
+  };
+
+  recursiveUngroup(queryTree);
+  renderBuilder();
+}
+
+function runQuery() {
+  fetch('/run-query/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify(queryTree)
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === "success") {
+      displayResults(data.columns, data.results);
+    } else {
+      alert("Query failed: " + data.message);
+    }
+  });
+}
+
+function displayResults(columns, rows) {
+  const container = document.getElementById('query-results');
+  if (!rows.length) {
+    container.innerHTML = "<p>No results found.</p>";
+    return;
+  }
+
+  let table = `<table class="table table-bordered table-sm table-striped"><thead><tr>`;
+  columns.forEach(col => table += `<th>${col}</th>`);
+  table += `</tr></thead><tbody>`;
+
+  rows.forEach(row => {
+    table += "<tr>";
+    columns.forEach(col => {
+      table += `<td>${row[col]}</td>`;
+    });
+    table += "</tr>";
+  });
+
+  table += "</tbody></table>";
+  container.innerHTML = table;
+}
+
+function submitQuery() {
+  fetch('/save-query/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify(queryTree)
+  }).then(res => res.json()).then(data => {
+    alert(data.message);
+  });
+}
+
+function loadQuery() {
+  fetch('/load-query/1/')  // TODO: make this dynamic later
+    .then(res => res.json())
+    .then(data => {
+      queryTree = data;
+      renderBuilder();
+    });
+}
+
+function exportToCSV() {
+  const table = document.querySelector("#query-results table");
+  if (!table) {
+    alert("No results to export.");
+    return;
+  }
+
+  let csv = [];
+  const rows = table.querySelectorAll("tr");
+  rows.forEach(row => {
+    const cols = Array.from(row.querySelectorAll("th, td")).map(cell =>
+      '"' + cell.textContent.replace(/"/g, '""') + '"'
+    );
+    csv.push(cols.join(","));
+  });
+
+  const blob = new Blob([csv.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "query_results.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+renderBuilder();
+
+function initSortable() {
+  document.querySelectorAll('.condition-list').forEach(ul => {
+    new Sortable(ul, {
+      animation: 150,
+      handle: 'li',
+      onEnd: function (evt) {
+        const groupId = ul.dataset.group;
+        const group = findGroupById(queryTree, groupId);
+
+        if (!group) return;
+
+        // Reorder group.children according to new DOM order
+        const newOrder = [...ul.children].map(li => li.dataset.id);
+        const newChildren = [];
+
+        newOrder.forEach(id => {
+          const found = group.children.find(child => child.id == id);
+          if (found) newChildren.push(found);
+        });
+
+        // Update the group's children array
+        group.children = newChildren;
+        renderBuilder();
+      }
+    });
+  });
+}
+
+</script>
+
+<style>
+  .bordered-item {
+    border: 1px dashed #ccc;
+    border-radius: 6px;
+    padding: 5px;
+    background-color: #fefefe;
+  }
+  .bordered-item:hover {
+    background-color: #f8f9fa;
+    border-color: #999;
+  }
+</style>
+
+{% endblock %}
+

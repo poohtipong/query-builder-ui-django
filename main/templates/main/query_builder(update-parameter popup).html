@@ -1,0 +1,809 @@
+
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+
+<div class="row">
+  <!-- Left Panel: Menu + Output Parameters -->
+  <div class="col-md-3">
+
+    <!-- Menu Card -->
+    <div class="card shadow-sm border mb-4">
+      <div class="card-header bg-light fw-bold">
+        Menu
+      </div>
+      <div class="card-body">
+        {% comment %} <h6 class="text-primary"><i class="bi bi-diagram-3"></i> Query Builder</h6> {% endcomment %}
+        <div class="d-grid gap-2">
+          <button onclick="submitQuery()" class="btn btn-success">
+            <i class="fas fa-save"></i> Save Query
+          </button>
+          <button onclick="loadQuery()" class="btn btn-warning">
+            <i class="fas fa-folder"></i> Load Query
+          </button>
+          <button onclick="runQuery()" class="btn btn-primary">
+            <i class="fas fa-play"></i> Run Query
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output Parameters Card -->
+    <div class="card shadow-sm border">
+      <div class="card-header bg-light fw-bold">
+        Output Parameters
+      </div>
+      <div class="card-body">
+        <div class="form-check mb-2 ms-2">
+          <input type="checkbox" id="select-all-output" class="form-check-input" onchange="selectAllOutputCheckboxes(this)">
+          <label for="select-all-output" class="form-check-label"><strong>Select All</strong></label>
+        </div>
+      
+        <input type="text" placeholder="Search" class="search-bar" oninput="filterOutputParameters(this.value)">
+      
+        <div id="output-parameters-list"></div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Panel: Query Builder + Results -->
+  <div class="col-md-9">
+
+    <!-- Builder Container Card -->
+    <div class="card shadow-sm border mb-4">
+      <div class="card-header bg-light fw-bold">
+        Query Builder
+      </div>
+      <div class="card-body">
+        <div id="builder-container"></div>
+      </div>
+    </div>
+
+    <!-- Query Results Card -->
+    <div class="card shadow-sm border mt-4">
+      <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
+        <span>Query Results</span>
+        <button onclick="exportToCSV()" class="btn btn-sm btn-outline-primary">
+          <i class="fas fa-file-csv"></i> Export CSV
+        </button>
+      </div>
+      <div id="query-results" class="card-body">
+        <!-- Results will be rendered here -->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script id="parameter-data" type="application/json">
+  {{ structured_categories|safe }}
+</script>
+
+<script>
+
+let parameterSelectTarget = { groupId: null, condId: null };
+
+
+const parameters = JSON.parse(document.getElementById("parameter-data").textContent);
+const builderContainer = document.getElementById("builder-container");
+
+function createCondition() {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "condition",
+    parameter: null,
+    operator: null,
+    value: ""
+//  logic: "AND"  // 👈 new
+  };
+}
+
+
+function createGroup(withLogic = true) {
+  return {
+    id: Date.now() + "-" + Math.random(),
+    type: "group",
+    logic: withLogic ? "AND" : null,  // ❗ root group has no logic
+    children: [createCondition()]
+  };
+}
+
+let queryTree = createGroup(false);  // no logic on root
+
+function renderBuilder() {
+  builderContainer.innerHTML = renderGroup(queryTree);
+  initSortable(); // 💡 Initialize drag-drop
+}
+
+function renderGroup(group) {
+  const isRoot = group.logic === null;
+  const alignStyle = isRoot ? 'text-align: left;' : 'text-align: right;';
+  let html = `<div class="group" data-id="${group.id}">`;
+
+  if (group.logic !== null) {
+    html += `
+      <select onchange="updateGroupLogic('${group.id}', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px; text-align: left;">
+        <option value="AND" ${group.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${group.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="AND NOT" ${group.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  html +=`
+    <ul class="condition-list" data-group="${group.id}">
+  `;
+
+  group.children.forEach((child, index) => {
+    if (child.type === 'condition') {
+      html += renderCondition(child, group.id, index);
+    } else if (child.type === 'group') {
+      html += `<li data-id="${child.id}" class = "bordered-item">${renderGroup(child)}</li>`;
+    }
+  });
+  
+  html += "</ul>";
+
+  html += `
+    <div></div>
+    <button onclick="addCondition('${group.id}')" class="btn btn-sm btn-outline-primary me-1" style="text-align: left;"><i class="fas fa-plus"></i> Patient/Study Criteria</button>
+    <button onclick="addGroup('${group.id}')" class="btn btn-sm btn-warning me-1" style="text-align: left;"><i class="fas fa-plus"></i> Criteria-Group</button>
+    ${group.logic !== null ? `
+      <button onclick="ungroupGroup('${group.id}')" class="btn btn-sm btn-outline-warning">Ungroup</button>
+      <button onclick="deleteGroup('${group.id}')" class="btn btn-sm btn-danger" style="text-align: left;"><i class="fas fa-times"></i></button>
+      ` : ''}
+  `;
+
+
+  html += "</div>";
+  return html;
+}
+
+function renderCondition(cond, groupId, index) {
+  const group = findGroupById(queryTree, groupId);
+  // const index = group.children.findIndex(c => c.id === cond.id);
+
+  let logicDropdown = '';
+  if (index > 0) {
+    logicDropdown = `
+      <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select d-inline me-2 mb-1" style="width: 90px;">
+        <option value="AND" ${cond.logic === 'AND' ? 'selected' : ''}>AND</option>
+        <option value="OR" ${cond.logic === 'OR' ? 'selected' : ''}>OR</option>
+        <option value="AND NOT" ${cond.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
+      </select>
+    `;
+  }
+
+  return `<li data-id="${cond.id}" class = "bordered-item" style="text-align: right;">
+    ${logicDropdown}
+    <button type="button" onclick="openParameterPopup('${groupId}', '${cond.id}')" class="btn btn-sm btn-outline-dark me-2 mb-1" style="width: 220px;">
+      ${getParameterNameById(cond.parameter) || "Select Parameter"}
+    </button>
+    <select onchange="updateCondition('${groupId}', '${cond.id}', 'operator', this.value)" class="form-select d-inline me-2 mb-1" style="width: 220px;">
+      <option value="">-- Select Operator --</option>
+      <option ${cond.operator === 'IS_EQUAL_TO' ? 'selected' : ''}>IS_EQUAL_TO</option>
+      <option ${cond.operator === 'IS_NOT_EQUAL_TO' ? 'selected' : ''}>IS_NOT_EQUAL_TO</option>
+      <option ${cond.operator === 'CONTAINS' ? 'selected' : ''}>CONTAINS</option>
+      <option ${cond.operator === 'DOES_NOT_CONTAIN' ? 'selected' : ''}>DOES_NOT_CONTAIN</option>
+      <option ${cond.operator === 'STARTS_WITH' ? 'selected' : ''}>STARTS_WITH</option>
+      <option ${cond.operator === 'ENDS_WITH' ? 'selected' : ''}>ENDS_WITH</option>
+      <option ${cond.operator === 'IS_BETWEEN' ? 'selected' : ''}>IS_BETWEEN</option>
+      <option ${cond.operator === 'EXISTS' ? 'selected' : ''}>EXISTS</option>
+      <option ${cond.operator === 'DOES_NOT_EXIST' ? 'selected' : ''}>DOES_NOT_EXIST</option>
+    </select>
+    <input type="text" value="${cond.value}" oninput="updateCondition('${groupId}', '${cond.id}', 'value', this.value)" class="form-control form-control-sm d-inline me-2 mb-1 rounded shadow-sm" style="width: 220px;" placeholder="Value..." />
+    <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
+  </li>`;
+}
+
+function getParameterNameById(id) {
+  const found = flattenParameters().find(p => p.id == id);
+  return found ? found.name : null;
+}
+
+function openParameterPopup(groupId, condId) {
+  parameterSelectTarget = { groupId, condId };
+  renderParameterPopup();  // initial render
+  const modal = new bootstrap.Modal(document.getElementById("parameterSelectModal"));
+  modal.show();
+}
+
+function renderParameterPopup(filterText = "") {
+  const container = document.getElementById("parameter-popup-list");
+  container.innerHTML = "";
+
+  parameters.forEach(cat => {
+    const catDiv = document.createElement("div");
+    catDiv.className = "mb-2";
+    catDiv.innerHTML = `<strong>${cat.name}</strong>`;
+
+    cat.subcategories.forEach(sub => {
+      const subDiv = document.createElement("div");
+      subDiv.className = "ms-3 mb-1";
+      subDiv.innerHTML = `<em>${sub.name}</em>`;
+
+      sub.parameters.forEach(param => {
+        if (!filterText || param.name.toLowerCase().includes(filterText.toLowerCase())) {
+          const pItem = document.createElement("div");
+          pItem.className = "ms-4 my-1 text-primary";
+          pItem.style.cursor = "pointer";
+          pItem.innerText = param.name;
+          pItem.onclick = () => {
+            selectParameter(param.id);
+          };
+          subDiv.appendChild(pItem);
+        }
+      });
+
+      catDiv.appendChild(subDiv);
+    });
+
+    container.appendChild(catDiv);
+  });
+}
+
+function selectParameter(paramId) {
+  const { groupId, condId } = parameterSelectTarget;
+  const group = findGroupById(queryTree, groupId);
+  if (!group) return;
+
+  const cond = group.children.find(c => c.id === condId);
+  if (!cond) return;
+
+  cond.parameter = paramId;
+
+  const modal = bootstrap.Modal.getInstance(document.getElementById("parameterSelectModal"));
+  modal.hide();
+
+  renderBuilder(); // re-render to show the selected name
+}
+
+function filterParameterPopup(text) {
+  renderParameterPopup(text);
+}
+
+
+function updateGroupLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function flattenParameters() {
+  let flat = [];
+  parameters.forEach(cat =>
+    cat.subcategories.forEach(sub =>
+      sub.parameters.forEach(param =>
+        flat.push({
+          ...param,
+          subcategory: sub.name,
+          category: cat.name
+        })
+      )
+    )
+  );
+  return flat;
+}
+
+
+function findGroupById(tree, id) {
+  if (tree.id === id) return tree;
+  for (const child of tree.children) {
+    if (child.type === 'group') {
+      const found = findGroupById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function changeLogic(groupId, logic) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.logic = logic;
+    renderBuilder();
+  }
+}
+
+function addCondition(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createCondition());
+    renderBuilder();
+  }
+}
+
+function deleteCondition(groupId, condId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children = group.children.filter(c => c.id !== condId);
+    renderBuilder();
+  }
+}
+
+function updateCondition(groupId, condId, key, value) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    const cond = group.children.find(c => c.id === condId);
+    if (cond) {
+      cond[key] = value;
+    }
+  }
+}
+
+function addGroup(groupId) {
+  const group = findGroupById(queryTree, groupId);
+  if (group) {
+    group.children.push(createGroup());
+    renderBuilder();
+  }
+}
+
+function deleteGroup(groupId) {
+  if (queryTree.id === groupId) return alert("Cannot delete root group.");
+  const recursiveDelete = (parent) => {
+    parent.children = parent.children.filter(c => {
+      if (c.type === 'group') {
+        if (c.id === groupId) return false;
+        recursiveDelete(c);
+      }
+      return true;
+    });
+  };
+  recursiveDelete(queryTree);
+  renderBuilder();
+}
+
+function ungroupGroup(groupId) {
+  if (queryTree.id === groupId) {
+    alert("Cannot ungroup the root group.");
+    return;
+  }
+
+  const recursiveUngroup = (parent) => {
+    parent.children = parent.children.flatMap(child => {
+      if (child.type === 'group' && child.id === groupId) {
+        // Spread the subgroup's children into the parent
+        return child.children;
+      } else {
+        return [child];
+      }
+    });
+
+    // Continue recursively for nested groups
+    parent.children.forEach(child => {
+      if (child.type === 'group') {
+        recursiveUngroup(child);
+      }
+    });
+  };
+
+  recursiveUngroup(queryTree);
+  renderBuilder();
+}
+
+function runQuery() {
+  console.log(getSelectedOutputParameters());
+  if (getSelectedOutputParameters().length === 0) {
+    alert("Please select at least one output parameter.");
+    return;
+  }
+  fetch('/run-query/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({
+      query: queryTree,
+      output_parameters: getSelectedOutputParameters()
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === "success") {
+      displayResults(data.columns, data.results);
+    } else {
+      alert("Query failed: " + data.message);
+    }
+  });
+}
+
+function displayResults(columns, rows) {
+  const container = document.getElementById('query-results');
+  if (!rows.length) {
+    container.innerHTML = "<p>No results found.</p>";
+    return;
+  }
+
+  let table = `<table class="table table-bordered table-sm table-striped"><thead><tr>`;
+  columns.forEach(col => table += `<th>${col}</th>`);
+  table += `</tr></thead><tbody>`;
+
+  rows.forEach(row => {
+    table += "<tr>";
+    columns.forEach(col => {
+      table += `<td>${row[col]}</td>`;
+    });
+    table += "</tr>";
+  });
+
+  table += "</tbody></table>";
+  container.innerHTML = table;
+}
+
+function submitQuery() {
+  fetch('/save-query/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify(queryTree)
+  }).then(res => res.json()).then(data => {
+    alert(data.message);
+  });
+}
+
+function loadQuery() {
+  fetch('/load-query/1/')  // TODO: make this dynamic later
+    .then(res => res.json())
+    .then(data => {
+      queryTree = data;
+      renderBuilder();
+    });
+}
+
+function exportToCSV() {
+  const table = document.querySelector("#query-results table");
+  if (!table) {
+    alert("No results to export.");
+    return;
+  }
+
+  let csv = [];
+  const rows = table.querySelectorAll("tr");
+  rows.forEach(row => {
+    const cols = Array.from(row.querySelectorAll("th, td")).map(cell =>
+      '"' + cell.textContent.replace(/"/g, '""') + '"'
+    );
+    csv.push(cols.join(","));
+  });
+
+  const blob = new Blob([csv.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "query_results.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+let cachedParameters = [];
+
+function renderOutputParameters(filterText = "") {
+  const container = document.querySelector("#output-parameters-list");
+  container.innerHTML = "";
+  cachedParameters = [];
+
+  parameters.forEach((cat, cIndex) => {
+    const catId = `cat-${cIndex}`;
+    const catCheckboxId = `cat-checkbox-${catId}`;
+    const catCollapseId = `cat-collapse-${catId}`;
+
+    // Create category block
+    const catDiv = document.createElement("div");
+    catDiv.className = "category-block";
+
+    // Category header row
+    const catHeader = document.createElement("div");
+    catHeader.className = "form-check ms-2 d-flex align-items-center justify-content-between";
+
+    catHeader.innerHTML = `
+      <div>
+        <input type="checkbox" class="form-check-input category-checkbox" id="${catCheckboxId}"
+               onchange="toggleCategory('${cat.name}', this.checked)">
+        <label class="form-check-label fw-bold ms-1" for="${catCheckboxId}">${cat.name}</label>
+      </div>
+      <button class="btn btn-sm toggle-btn" onclick="toggleDisplay('${catCollapseId}', this)">&#x25BC;</button>
+    `;
+
+    // Category content container
+    const catContent = document.createElement("div");
+    catContent.id = catCollapseId;
+    catContent.style.display = "block";
+    catContent.className = "ms-3";
+
+    // Loop subcategories
+    cat.subcategories.forEach((sub, sIndex) => {
+      const subId = `${catId}-sub-${sIndex}`;
+      const subCheckboxId = `sub-checkbox-${subId}`;
+      const subCollapseId = `sub-collapse-${subId}`;
+
+      const subDiv = document.createElement("div");
+      subDiv.className = "subcategory-block";
+
+      // Subcategory header
+      const subHeader = document.createElement("div");
+      subHeader.className = "form-check d-flex align-items-center justify-content-between";
+
+      subHeader.innerHTML = `
+        <div>
+          <input type="checkbox" class="form-check-input subcategory-checkbox" id="${subCheckboxId}"
+                 onchange="toggleSubcategory('${cat.name}', '${sub.name}', this.checked)">
+          <label class="form-check-label fw-semibold ms-1" for="${subCheckboxId}">${sub.name}</label>
+        </div>
+        <button class="btn btn-sm toggle-btn" onclick="toggleDisplay('${subCollapseId}', this)">&#x25BC;</button>
+      `;
+
+      // Subcategory content
+      const subContent = document.createElement("div");
+      subContent.id = subCollapseId;
+      subContent.style.display = "block";
+      subContent.className = "ms-3";
+
+      // Parameters
+      sub.parameters.forEach(param => {
+        if (!filterText || param.name.toLowerCase().includes(filterText.toLowerCase())) {
+          const paramDiv = document.createElement("div");
+          paramDiv.className = "form-check parameter-checkbox";
+          paramDiv.innerHTML = `
+            <input type="checkbox" class="form-check-input output-param-checkbox"
+                   value="${param.id}" id="output-${param.id}">
+            <label class="form-check-label" for="output-${param.id}">${param.name}</label>
+          `;
+          subContent.appendChild(paramDiv);
+
+          cachedParameters.push({ ...param, catName: cat.name, subName: sub.name });
+        }
+      });
+
+      subDiv.appendChild(subHeader);
+      subDiv.appendChild(subContent);
+      catContent.appendChild(subDiv);
+    });
+
+    catDiv.appendChild(catHeader);
+    catDiv.appendChild(catContent);
+    container.appendChild(catDiv);
+  });
+}
+
+function toggleDisplay(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const isHidden = el.style.display === "none";
+  el.style.display = isHidden ? "block" : "none";
+  btn.innerHTML = isHidden ? "&#x25BC;" : "&#x25B6;"; // ▼ or ▶
+}
+
+
+function toggleCategory(categoryName, isChecked) {
+  cachedParameters.forEach(param => {
+    if (param.catName === categoryName) {
+      const checkbox = document.getElementById("output-" + param.id);
+      if (checkbox) checkbox.checked = isChecked;
+    }
+  });
+}
+
+function toggleSubcategory(categoryName, subName, isChecked) {
+  cachedParameters.forEach(param => {
+    if (param.catName === categoryName && param.subName === subName) {
+      const checkbox = document.getElementById("output-" + param.id);
+      if (checkbox) checkbox.checked = isChecked;
+    }
+  });
+}
+
+
+function filterOutputParameters(text) {
+  renderOutputParameters(text);
+}
+
+function selectAllOutputCheckboxes(master) {
+  const checkboxes = document.querySelectorAll('.output-param-checkbox');
+  checkboxes.forEach(cb => cb.checked = master.checked);
+}
+
+function selectAllOutputParameters() {
+  document.querySelectorAll('.output-param-checkbox').forEach(cb => cb.checked = true);
+}
+
+function getSelectedOutputParameters() {
+  return Array.from(document.querySelectorAll('.output-param-checkbox:checked'))
+              .map(cb => cb.value);
+}
+
+function selectGroupParameters(categoryName, subcategoryName = null) {
+  cachedParameters.forEach(param => {
+    if (
+      param.catName === categoryName &&
+      (subcategoryName === null || param.subName === subcategoryName)
+    ) {
+      const checkbox = document.getElementById("output-" + param.id);
+      if (checkbox) checkbox.checked = true;
+    }
+  });
+}
+
+
+renderBuilder();
+renderOutputParameters();
+
+function initSortable() {
+  document.querySelectorAll('.condition-list').forEach(ul => {
+    new Sortable(ul, {
+      animation: 150,
+      handle: 'li',
+      onEnd: function (evt) {
+        const groupId = ul.dataset.group;
+        const group = findGroupById(queryTree, groupId);
+
+        if (!group) return;
+
+        // Reorder group.children according to new DOM order
+        const newOrder = [...ul.children].map(li => li.dataset.id);
+        const newChildren = [];
+
+        newOrder.forEach(id => {
+          const found = group.children.find(child => child.id == id);
+          if (found) newChildren.push(found);
+        });
+
+        // Update the group's children array
+        group.children = newChildren;
+        renderBuilder();
+      }
+    });
+  });
+}
+
+</script>
+
+<style>
+  .bordered-item {
+    border: 1px dashed #ccc;
+    border-radius: 6px;
+    padding: 5px;
+    background-color: #fefefe;
+  }
+  .bordered-item:hover {
+    background-color: #f8f9fa;
+    border-color: #999;
+  }
+  
+  #output-panel {
+    background-color: #e0f3ff;
+    border-radius: 20px;
+    padding: 12px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: sans-serif;
+  }
+
+  .category-block {
+    margin-bottom: 10px;
+  }
+
+  .subcategory-block {
+    margin-left: 20px;
+    margin-bottom: 5px;
+  }
+
+  .parameter-checkbox {
+    margin-left: 40px;
+  }
+
+  .output-header {
+    font-weight: bold;
+    font-size: 14px;
+    text-align: center;
+    margin-bottom: 10px;
+  }
+
+  .search-bar {
+    width: 80%;
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    margin-left: 10%;
+    margin-bottom: 10px;
+    font-style: italic;
+    color: gray;
+  }
+  
+  .form-check-label {
+    cursor: pointer;
+  }
+  .form-check-input {
+    cursor: pointer;
+  }
+  .toggle-btn {
+    outline: none;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .toggle-btn:focus {
+    outline: none;
+  }
+  #output-panel {
+    background-color: #e0f3ff;
+    border-radius: 20px;
+    padding: 12px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: sans-serif;
+    font-size: 13px;
+  }
+
+  .category-block,
+  .subcategory-block,
+  .parameter-checkbox {
+    font-size: 13px;
+    margin-left: 6px; /* 🔧 Reduced from larger indent */
+  }
+
+  .subcategory-block {
+    margin-left: 12px !important; /* was 20+, now shorter */
+  }
+
+  .parameter-checkbox {
+    margin-left: 18px !important; /* was 40px+, now tighter */
+  }
+
+  .form-check-label {
+    font-size: 13px;
+  }
+
+  .form-check-input {
+    transform: scale(0.85);
+    margin-top: 3px;
+  }
+
+  .btn-outline-secondary {
+    font-size: 12px;
+    padding: 1px 5px;
+  }
+
+  .search-bar {
+    font-size: 12px;
+    padding: 4px 6px;
+  }
+
+  .output-header {
+    font-size: 14px;
+  }
+</style>
+
+<!-- Parameter Selection Modal -->
+<div class="modal fade" id="parameterSelectModal" tabindex="-1" aria-labelledby="parameterModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="parameterModalLabel">Select a Parameter</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+
+        <input type="text" placeholder="Search..." class="form-control form-control-sm mb-3" oninput="filterParameterPopup(this.value)">
+
+        <div id="parameter-popup-list" style="max-height: 400px; overflow-y: auto;"></div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+
+{% endblock %}
+

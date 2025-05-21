@@ -1,0 +1,182 @@
+{% extends "volt/layouts/base.html" %}
+{% load custom_filters %}
+{% block content %}
+<h2><i class="fas fa-puzzle-piece"></i> Column Mapping</h2>
+<div style="display: flex; gap: 40px; align-items: flex-start;">
+  <h3 style="max-height: 500px; flex: 1; border-right: 1px solid #ddd; padding-right: 20px;">Assign to Parameters</h3>
+  <h3 style="max-height: 500px; flex: 1; border-right: 1px solid #ddd; padding-right: 20px;">Unassigned Imported Columns</h3>
+</div>
+<div style="display: flex; gap: 40px; align-items: flex-start;">
+
+  <!-- Left: Parameters Panel -->
+  <div class="overflow-auto" style="max-height: 500px; flex: 1; border-right: 1px solid #ddd; padding-right: 20px;">
+    {% for category in categories %}
+      <h4>{{ category.name }}</h4>
+      {% for sub in category.subcategory_set.all %}
+        <h5><i class="fas fa-arrow-right"></i> {{ sub.name }}</h5>
+        <ul id="dropzone-subcat-{{ sub.id }}" data-subcategory="{{ sub.id }}"
+            style="border: 1px dashed #aaa; padding: 10px; min-height: 40px;">
+            {% for param in sub.parameter_set.all %}
+                <li style="margin-left: 10px;">
+                    <strong>
+                      {{ param.name }} - 
+                      {% if param.importedcolumn %}
+                        ({{ param.importedcolumn.table.external_db.name }}) database / ({{ param.importedcolumn.table.name }}) table
+                      {% endif %}
+                    </strong> 
+                    (<span style="color:gray">{{ param.data_type }}</span>)
+                    <ul id="param-{{ param.id }}"
+                        class="dropzone"
+                        data-param="{{ param.id }}"
+                        style="border: 1px dotted #bbb; margin: 5px 0; padding: 5px;">
+                    {% for col in columns %}
+                        {% if col.mapped_parameter_id == param.id %}
+                        <li data-id="{{ col.id }}" data-status="(unassigned)">{{ col.name }} ({{ col.data_type }})</li>
+                        {% endif %}
+                    {% endfor %}
+                    </ul>
+                </li>
+            {% endfor %}
+        </ul>
+      {% endfor %}
+    {% endfor %}
+  </div>
+
+  <!-- Right: Unassigned Columns Panel -->
+  <div  class="overflow-auto" style="max-height: 500px; flex: 1;">
+    <div id="unassigned-columns" style="min-height: 400px;">
+      {% for db_name, tables in grouped_unassigned.items %}
+        <div style="margin-bottom: 10px;">
+          <strong><i class="fas fa-folder"></i> {{ db_name }}</strong>
+          {% for table_name, cols in tables.items %}
+            <div style="margin-left: 15px; margin-top: 5px;">
+              <strong><i class="fas fa-file-alt"></i> {{ table_name }}</strong>
+              <ul class="dropzone"
+                  style="border: 1px dashed #bbb; padding: 5px; margin: 5px 0;">
+                {% for col in cols %}
+                  <li data-id="{{ col.id }}" data-status="(unassigned)" draggable="true">
+                    {{ col.name }} ({{ col.data_type }})
+                    {% with param=param_lookup|get_item:col.mapped_parameter_id %}
+                      {% if param %}
+                        — {{ param.category }}/{{ param.subcategory }}
+                      {% endif %}
+                    {% endwith %}
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+    // Remove duplicates of column from all zones (except the one just dropped to)
+    function removeDuplicates(colId, currentZone) {
+      document.querySelectorAll('.dropzone-param, .dropzone').forEach(zone => {
+        if (zone !== currentZone) {
+          [...zone.children].forEach(child => {
+            if (child.getAttribute('data-id') === colId) {
+              child.remove();
+            }
+          });
+        }
+      });
+    }
+  
+    // Clear the current dropzone to enforce 1:1 mapping
+    function enforceSingleItem(zone, keepItem) {
+      [...zone.children].forEach(child => {
+        if (child !== keepItem) {
+          zone.removeChild(child);
+        }
+      });
+    }
+  
+    // Setup Sortable for all dropzones
+    document.querySelectorAll('.dropzone').forEach(zone => {
+      new Sortable(zone, {
+        group: {
+          name: 'columns',
+          pull: 'clone',
+          put: true
+        },
+        animation: 150,
+        sort: true,
+        onAdd: (evt) => {
+          const colId = evt.item.getAttribute('data-id');
+          const paramId = evt.to.getAttribute('data-param');
+  
+          if (paramId) {
+            // Assign column to parameter
+            fetch('/map-column/', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+              },
+              body: JSON.stringify({ column_id: colId, parameter_id: paramId })
+            })
+            .then(res => {
+              if (!res.ok) {
+                alert('Mapping failed.');
+                evt.item.remove();  // remove the cloned failed copy
+              } else {
+                removeDuplicates(colId, evt.to);
+                enforceSingleItem(evt.to, evt.item);
+              }
+            });
+  
+          } else {
+            // Unassign column
+            fetch('/unassign-column/', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+              },
+              body: JSON.stringify({ column_id: colId })
+            })
+            .then(res => {
+              if (!res.ok) {
+                alert('Unassign failed.');
+                evt.item.remove(); // remove the failed copy
+              } else {
+                removeDuplicates(colId, evt.to);
+              }
+            });
+          }
+        }
+      });
+    });
+</script>
+
+<style>
+    .dropzone-param:hover,
+    .dropzone:hover {
+      background-color: #f0f8ff;
+      transition: background-color 0.3s;
+    }
+  
+    .dropzone-param,
+    .dropzone {
+      min-height: 40px;
+      padding: 5px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+    }
+  
+    li[data-id] {
+      background-color: #f9f9f9;
+      border: 1px solid #ddd;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+      border-radius: 4px;
+      cursor: move;
+    }
+</style>
+
+{% endblock %}

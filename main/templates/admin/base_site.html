@@ -1,0 +1,64 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% block title %}Query Builder Admin{% endblock %}
+
+{% block branding %}
+  <h1 id="site-name">
+    <a href="{% url 'admin:index' %}">
+      <img src="{% static 'img/my-logo.png' %}" height="30" style="vertical-align: middle;" />
+      My Smart Admin
+    </a>
+  </h1>
+{% endblock %}
+
+{% block header %}
+  <!-- Top Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top shadow-sm">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#"><i class="fas fa-brain"></i> Query Builder UI</a>
+
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+        aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto">
+          <li class="nav-item">
+            {% if request.user.is_staff %}
+            <a class="nav-link" href="/main/column-mapping/"><i class="fas fa-folder-open"></i> Column Mapping</a>
+            {% endif %}
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="/query-builder/"><i class="fas fa-brain"></i> Query Builder</a>
+          </li>
+          <ul class="navbar-nav ms-auto">
+            {% if request.user.is_authenticated %}
+              <li class="nav-item">
+                <a class="nav-link" href="/logout/">
+                  <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+              </li>
+            {% endif %}
+          </ul>
+        </ul>
+      </div>
+    </div>
+  </nav>
+{% endblock %}
+
+{% block footer %}
+  <!-- Sticky Footer -->
+  <footer class="bg-light text-center text-muted py-3 mt-auto border-top">
+    <small>© 2025 Query Builder UI. All rights reserved.</small>
+  </footer>
+
+  <!-- JS -->
+  <script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
+  {% comment %} <script src="{% static 'assets/js/volt.js' %}"></script>   {% endcomment %}
+
+  <!-- Volt CSS -->
+  <link href="{% static 'assets/vendor/bootstrap/css/bootstrap.min.css' %}" rel="stylesheet">
+  {% comment %} <link href="{% static 'assets/css/volt.css' %}" rel="stylesheet"> {% endcomment %}
+{% endblock %}
