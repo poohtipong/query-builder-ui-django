@@ -1,6 +1,6 @@
 from django.urls import path, re_path, include
 from . import views
-from .views import create_parameter_view, edit_parameter_view, delete_parameter_view, edit_subcategory_view, delete_subcategory_view, edit_category_view, delete_category_view, create_subcategory_view, create_category_view, manage_categories_view, manage_databases_view, admin_dashboard_view, register, logout_view, column_mapping_view, map_column, run_query, query_builder_view, save_query_structure, unassign_column
+from .views import manage_tables_view, test_connection_view, move_parameter_view, create_parameter_view, edit_parameter_view, delete_parameter_view, edit_subcategory_view, delete_subcategory_view, edit_category_view, delete_category_view, create_subcategory_view, create_category_view, manage_categories_view, manage_databases_view, admin_dashboard_view, register, logout_view, column_mapping_view, map_column, run_query, query_builder_view, save_query_structure, unassign_column
 from django.contrib.auth import views as auth_views, logout
 from django.contrib.auth.views import LogoutView
 from django.views.generic import RedirectView
@@ -46,5 +46,10 @@ urlpatterns += [
     path("admin-categories/delete-subcategory/<int:subcategory_id>/", delete_subcategory_view, name="delete_subcategory"),
     path("admin-categories/edit-parameter/<int:parameter_id>/", edit_parameter_view, name="edit_parameter"),
     path("admin-categories/delete-parameter/<int:parameter_id>/", delete_parameter_view, name="delete_parameter"),
+    path("admin-categories/move-parameter/", move_parameter_view, name="move_parameter"),
+    path("lookup-values/", views.lookup_values, name="lookup-values"),
+    path("admin-databases/test-connection/", test_connection_view, name="test_connection"),
+    path("admin-tables/", manage_tables_view, name="manage_tables"),
+    path("generate-ids/", views.generate_ids_view, name="generate_ids"),
 ]
 

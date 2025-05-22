@@ -36,19 +36,33 @@
         <i class="fas fa-plus"></i> Add SubCategory
         </button>
         <small class="text-white-50">Order: {{ cat.order }}</small>
+        <button class="btn btn-sm btn-info toggle-chevron" type="button" data-bs-toggle="collapse" data-bs-target="#cat-{{ cat.id }}">
+          <i class="fas fa-chevron-down"></i>
+        </button>
       </div>
-      <div class="card-body">
+      <div class="card-body collapse show"  id="cat-{{ cat.id }}">
         {% for sub in cat.subcategory_set.all %}
           <div class="mb-3">
             <h6><i class="fas fa-arrow-right me-1"></i> {{ sub.name }}</h6>
-            <ul class="list-group list-group-sm ms-3">
+            <ul class="list-group list-group-sm dropzone ms-3" id="subcat-{{ sub.id }}" data-subcategory-id="{{ sub.id }}">
               {% for param in sub.parameter_set.all %}
-                <li class="list-group-item d-flex justify-content-between align-items-center">
+                <li class="list-group-item d-flex justify-content-between align-items-center py-1 px-2" data-id="{{ param.id }}">
                     <div>
                     <strong>{{ param.name }}</strong>
                     <small class="text-muted">({{ param.data_type }})</small>
+                    {% if param.mapped_column %}
+                      <small class="text-muted ms-1">({{ param.mapped_column.table.name }})</small>
+                    {% endif %}
+                    {% if param_assignments.param.id.source_table %}
+                      <small class="text-info">({{ param_assignments.param.id.source_table }})</small>
+                    {% endif %}
                     {% if param.has_unit and param.target_unit %}
                         <small class="text-muted">[{{ param.target_unit }}]</small>
+                    {% endif %}
+                    {% if param_assignments.param.id.assigned_to %}
+                      <small class="text-muted ms-1">
+                        [in: {{ param_assignments.param.id.assigned_to|join:", " }}]
+                      </small>
                     {% endif %}
                     <span class="badge {% if param.is_phi %}bg-danger{% elif param.is_hhi %}bg-info{% else %}bg-secondary{% endif %} ms-2">
                         {% if param.is_phi %}PHI{% elif param.is_hhi %}HHI{% else %}Standard{% endif %}
@@ -457,6 +471,45 @@
     }
   }
 
+  // Enable drag-drop for each parameter list
+  document.querySelectorAll(".dropzone").forEach(zone => {
+    new Sortable(zone, {
+      group: "parameters",
+      animation: 150,
+      onAdd: function (evt) {
+        const paramId = evt.item.dataset.id;
+        const newSubId = evt.to.dataset.subcategoryId;
+
+        fetch("{% url 'move_parameter' %}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": "{{ csrf_token }}",
+          },
+          body: JSON.stringify({
+            parameter_id: paramId,
+            subcategory_id: newSubId
+          })
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.status !== "success") {
+            alert("Error: " + data.message);
+            // Optional: move back
+          }
+        });
+      }
+    });
+  });
+
+  document.querySelectorAll(".toggle-chevron").forEach(btn => {
+    btn.addEventListener("click", function () {
+      const icon = btn.querySelector("i");
+      icon.classList.toggle("fa-chevron-down");
+      icon.classList.toggle("fa-chevron-up");
+    });
+  });
+
 </script>
 
 <style>
@@ -471,6 +524,17 @@
   }
   .compact .modal-content {
     font-size: 0.9rem;
+  }
+  .list-group-item[data-id]:hover {
+    background-color: #f0f8ff;
+    border-color: #4a90e2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    cursor: move;
+    transition: all 0.2s ease;
+  }
+
+  .list-group-item[data-id] {
+    transition: all 0.2s ease;
   }
 </style>
 {% endblock %}

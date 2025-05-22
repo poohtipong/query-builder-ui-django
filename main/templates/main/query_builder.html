@@ -6,7 +6,7 @@
 
 <div class="row">
   <!-- Left Panel: Menu + Output Parameters -->
-  <div class="col-md-3">
+  <div class="col-md-2">
 
     <!-- Menu Card -->
     <div class="card shadow-sm border mb-4">
@@ -17,23 +17,23 @@
       <div class="card-body">
         {% comment %} <h6 class="text-primary"><i class="bi bi-diagram-3"></i> Query Builder</h6> {% endcomment %}
         <div class="d-grid gap-2">
-          <button onclick="submitQuery()" class="btn btn-dark-gray">
+          <button onclick="submitQuery()" class="btn menu-button">
             <i class="fas fa-save"></i>&nbsp&nbsp Save Query
           </button>
-          <button onclick="loadQuery()" class="btn btn-dark-gray">
+          <button onclick="loadQuery()" class="btn menu-button">
             <i class="fas fa-folder"></i>&nbsp&nbsp Load Query
           </button>
-          <button onclick="openExportModal()" class="btn btn-dark-gray">
+          <button onclick="openExportModal()" class="btn menu-button">
             <i class="fas fa-download"></i>&nbsp&nbsp Export Query
           </button>
           <input type="file" id="importQueryFile" accept=".json" style="display: none" onchange="importQueryFromFile(event)" />
-          <button onclick="document.getElementById('importQueryFile').click()" class="btn btn-dark-gray">
+          <button onclick="document.getElementById('importQueryFile').click()" class="btn menu-button">
             <i class="fas fa-upload"></i>&nbsp&nbsp Import Query
           </button>
-          <button onclick="toggleGroupingMode()" class="btn btn-dark-gray">
+          <button onclick="toggleGroupingMode()" class="btn menu-button">
             <i class="fas fa-object-group"></i>&nbsp&nbsp Group/Ungroup
           </button>
-          <button onclick="runQuery()" class="btn btn-dark-gray run-query-btn">
+          <button onclick="runQuery()" class="btn menu-button run-query-btn">
             <strong>Run Query</strong>
             <i class="fa-solid fa-circle-play play-icon ms-2"></i>
           </button>
@@ -70,7 +70,7 @@
   </div>
 
   <!-- Right Panel: Query Builder + Results -->
-  <div class="col-md-9">
+  <div class="col-md-10">
 
     <!-- Builder Container Card -->
     <div class="card shadow-sm border mb-4">
@@ -123,7 +123,7 @@
 
   function enableGroupingSelection() {
     const allConditions = [];
-  
+
     // Helper to flatten conditions (recursively)
     function collectConditions(group, inheritedLogic = null) {
       group.children.forEach((child, index) => {
@@ -138,10 +138,10 @@
         }
       });
     }
-  
+
     // Step 1: Flatten all conditions
     collectConditions(queryTree);
-  
+
     // Step 2: Remove all groups, leave only conditions directly under root
     queryTree.children = allConditions.map(cond => ({
       id: cond.id,
@@ -151,36 +151,85 @@
       value: cond.value,
       value0: cond.value0,
       value1: cond.value1,
-      logic: cond.logic || null
+      logic: cond.logic || null // Keep condition logic intact
     }));
-  
-    renderBuilder(); // re-render flattened builder
-  
-    // Step 3: Inject checkboxes with correct checked status
+
+    renderBuilder(); // Re-render flattened builder
+
+    // Step 3: Inject checkboxes with correct checked status and update row styling
     setTimeout(() => {
       const allConditionItems = document.querySelectorAll('.condition-list li');
-  
+
       allConditionItems.forEach(li => {
         const id = li.dataset.id;
         const wasGrouped = allConditions.find(c => c.id == id)?.wasGrouped;
-  
+
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'condition-selector-checkbox';
+        checkbox.style.width = '20px';
+        checkbox.style.height = '20px';
+        checkbox.style.cursor = 'pointer';
+        checkbox.style.accentColor = '#007bff';  // Bootstrap blue or any preferred color
         checkbox.style.marginRight = '8px';
         checkbox.dataset.id = id;
         checkbox.checked = !!wasGrouped; // Check if it was previously grouped
-  
-        li.insertBefore(checkbox, li.firstChild);
+
+        // Add hover and select styles
+        li.classList.add('condition-row');  // Add a custom class for condition rows
+        if (checkbox.checked) {
+          li.classList.add('selected');  // Mark as selected
+        }
+
+        // When the checkbox is clicked, toggle the 'selected' class for the row
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) {
+            li.classList.add('selected');
+          } else {
+            li.classList.remove('selected');
+          }
+        });
+
+        const rowDiv = li.querySelector('.d-flex.align-items-center');
+        const checkboxWrapper = document.createElement('div');
+        checkboxWrapper.style.width = '50px'; // adjust width as needed
+        checkboxWrapper.appendChild(checkbox);
+        rowDiv.appendChild(checkboxWrapper);
       });
     }, 50);
-  }
-  
 
+    // Step 4: Add hover effect and selected class for conditions
+    document.querySelectorAll('.condition-row').forEach(li => {
+      li.addEventListener('mouseenter', () => {
+        li.classList.add('hover');
+      });
+      li.addEventListener('mouseleave', () => {
+        li.classList.remove('hover');
+      });
+
+      // Add click event to toggle selection
+      li.addEventListener('click', () => {
+        const checkbox = li.querySelector('.condition-selector-checkbox');
+        checkbox.checked = !checkbox.checked;
+        applyGroupingSelection();  // Reapply selection and group logic
+      });
+    });
+  }
+ 
   function applyGroupingSelection() {
+    
     const checkboxes = document.querySelectorAll('.condition-selector-checkbox');
     
     const selectedIds = [];
+    checkboxes.forEach(cb => {
+      if (cb.checked) {
+        selectedIds.push(cb.dataset.id);
+        cb.closest('li').classList.add('selected');  // Add "selected" class to the row
+      } else {
+        cb.closest('li').classList.remove('selected');  // Remove "selected" class if unchecked
+      }
+    });
+    
     checkboxes.forEach(cb => {
       if (cb.checked) {
         selectedIds.push(cb.dataset.id);
@@ -337,7 +386,6 @@
     return null;
   }
   
-
   let currentQueryName = "Untitled Query";
 
   const OPERATORS_BY_TYPE = {
@@ -388,6 +436,30 @@
 
   function renderBuilder() {
     builderContainer.innerHTML = renderGroup(queryTree);
+    // Restore Lookup Modal HTML if needed
+    if (!document.getElementById("lookupModal")) {
+      const modalHTML = document.createElement("div");
+      modalHTML.innerHTML = `
+        <div class="modal fade" id="lookupModal" tabindex="-1" aria-labelledby="lookupModalLabel" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-scrollable modal-lg">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="lookupModalLabel">Select Value(s)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <input type="text" id="lookup-search" class="form-control form-control-sm mb-3" placeholder="Search values..." oninput="filterLookupValues(this.value)">
+                <div id="lookup-values" style="max-height: 300px; overflow-y: auto;"></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-primary" onclick="applyLookupValues()">Apply</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(modalHTML);
+    }
+
     initSortable(); // 💡 Initialize drag-drop
   }
 
@@ -452,7 +524,7 @@
     let logicDropdown = '';
     if (index > 0) {
       logicDropdown = `
-        <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select d-inline me-2 mb-1 logic-control" style="width: 90px;">
+        <select onchange="updateCondition('${groupId}', '${cond.id}', 'logic', this.value)" class="form-select form-select-sm logic-control" >
           <option value="AND" ${cond.logic === 'AND' ? 'selected' : ''}>AND</option>
           <option value="OR" ${cond.logic === 'OR' ? 'selected' : ''}>OR</option>
           <option value="AND NOT" ${cond.logic === 'AND NOT' ? 'selected' : ''}>NOT</option>
@@ -460,17 +532,22 @@
       `;
     }
 
-    return `<li data-id="${cond.id}" class = "bordered-item" style="text-align: right;">
-      ${logicDropdown}
-      <button type="button" onclick="openParameterPopup('${groupId}', '${cond.id}')"
-          class="btn btn-sm me-2 mb-1"
-          style="width: 220px; background-color: rgb(224, 242, 255);">
-        ${getParameterNameById(cond.parameter) || "Select Parameter"}
-      </button>
-      ${renderOperatorDropdown(groupId, cond.id, cond.parameter, cond.operator)}
-      ${renderValueInput(cond, groupId)}
-      <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
-    </li>`;
+    return `<li data-id="${cond.id}" class = "bordered-item" style="text-align: right; max-width: none; width: 100%;">
+      <div class="d-flex align-items-center gap-2">
+        <div style="width: 90px;">${logicDropdown}</div>
+        <button type="button" onclick="openParameterPopup('${groupId}', '${cond.id}')"
+            class="btn btn-sm me-2 mb-1"
+            style="width: 15%; background-color: rgb(224, 242, 255);">
+          ${getParameterNameById(cond.parameter) || "Select Parameter"}
+        </button>
+        <div style="width: 15%;">${renderOperatorDropdown(groupId, cond.id, cond.parameter, cond.operator)}</div>
+        <div style="width: 40%;">${renderValueInput(cond, groupId)}</div>
+        <div style="width: 50px;">
+          <button onclick="deleteCondition('${groupId}', '${cond.id}')" class="btn btn-sm btn-danger"><i class="fas fa-times"></i></button>
+        </div>
+        <!-- dynamically injected checkbox comes here -->
+      </div>
+     </li>`;
   }
 
   function renderOperatorDropdown(groupId, condId, paramId, selectedOp) {
@@ -495,16 +572,23 @@
             value="${val || ""}"
             oninput="updateCondition('${groupId}', '${cond.id}', 'value${index}', this.value)"
             class="form-control form-control-sm d-inline me-2 mb-1 rounded shadow-sm"
-            style="width: 150px; background-color: rgb(253, 206, 239);" />
+            style="width: 50%; background-color: rgb(253, 206, 239);" />
     `;
 
     if (operator === "IS_INCLUDED" || operator === "IS_EXCLUDED") {
       return `
-        <input type="file" accept=".csv,.xlsx" 
-              onchange="handleValueFileUpload(event, '${groupId}', '${cond.id}')"
-              class="form-control form-control-sm d-inline me-2 mb-1" 
-              style="width: 220px; background-color: rgb(253, 206, 239);" />
-        <span class="text-muted small" style="font-size: 11px; background-color: rgb(253, 206, 239);">.csv/.xlsx (1 column)</span>
+        <div class="d-inline align-items-center gap-1">
+          <input type="text" placeholder="Upload list" class="form-control form-control-sm d-inline me-2 mb-1"
+                style="width: 50%; background-color: rgb(253, 206, 239);"
+                value="${cond.value || ""}" readonly disabled />
+
+          <label class="btn btn-sm btn-outline-secondary mb-1" style="vertical-align: top;">
+            <i class="fas fa-file-upload"></i>
+            <input type="file" accept=".csv,.xlsx" 
+                  onchange="handleValueFileUpload(event, '${groupId}', '${cond.id}')"
+                  style="display: none;" />
+          </label>
+        </div>
       `;
     }
     if (operator === "EXISTS" || operator === "DOES_NOT_EXIST") {
@@ -515,7 +599,18 @@
       // support value0 and value1
       cond.value0 = cond.value0 || "";
       cond.value1 = cond.value1 || "";
-      return valueInput(cond.value0, "0") + valueInput(cond.value1, "1");
+      return `<div class="d-flex gap-2">${valueInput(cond.value0, "0")}${valueInput(cond.value1, "1")}</div>`;
+    }
+
+    if (type === "text") {
+      return `
+        <div class="d-inline align-items-center gap-1">
+          ${valueInput(cond.value)}
+          <button class="btn btn-sm btn-outline-secondary" onclick="openLookupModal('${groupId}', '${cond.id}')">
+            <i class="fa-solid fa-list"></i> <!-- Lookup Icon -->
+          </button>
+        </div>
+      `;
     }
 
     return valueInput(cond.value);
@@ -530,11 +625,13 @@
       let values = [];
       if (file.name.endsWith(".csv")) {
         const lines = e.target.result.split(/\r?\n/).filter(x => x.trim());
-        values = lines.map(x => x.trim()).filter(x => x !== "");
+        // Remove header row if it looks like a column name
+        values = lines.slice(1).map(x => x.trim()).filter(x => x !== "");
       } else {
         const workbook = XLSX.read(e.target.result, { type: "binary" });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        values = XLSX.utils.sheet_to_json(sheet, { header: 1 }).map(row => row[0]).filter(Boolean);
+        const allRows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        values = allRows.slice(1).map(row => row[0]).filter(Boolean);
       }
 
       const group = findGroupById(queryTree, groupId);
@@ -544,6 +641,13 @@
       if (!cond) return;
 
       cond.value = values.join(","); // Store as comma-separated string
+
+      // ✅ Update the readonly input field to show loaded values
+      const inputField = document.querySelector(`li[data-id="${condId}"] input[readonly]`);
+      if (inputField) {
+        inputField.value = cond.value;
+      }
+
       toastr("Uploaded " + values.length + " values.", "success");
     };
 
@@ -553,7 +657,6 @@
       reader.readAsBinaryString(file);
     }
   }
-
 
   function getParameterNameById(id) {
     const found = flattenParameters().find(p => p.id == id);
@@ -630,7 +733,6 @@
     });
   }
 
-
   function selectParameter(paramId) {
     const { groupId, condId } = parameterSelectTarget;
     const group = findGroupById(queryTree, groupId);
@@ -643,14 +745,13 @@
 
     const modal = bootstrap.Modal.getInstance(document.getElementById("parameterSelectModal"));
     modal.hide();
-
+    updateSelectedOutputDisplay(); // Automatically update the Output Parameters list
     renderBuilder(); // re-render to show the selected name
   }
 
   function filterParameterPopup(text) {
     renderParameterPopup(text);
   }
-
 
   function updateGroupLogic(groupId, logic) {
     const group = findGroupById(queryTree, groupId);
@@ -675,7 +776,6 @@
     );
     return flat;
   }
-
 
   function findGroupById(tree, id) {
     if (tree.id === id) return tree;
@@ -710,6 +810,7 @@
       group.children = group.children.filter(c => c.id !== condId);
       renderBuilder();
     }
+    updateSelectedOutputDisplay(); // Automatically update the Output Parameters list
   }
 
   function updateCondition(groupId, condId, key, value) {
@@ -781,23 +882,23 @@
   }
 
   function runQuery() {
-    console.log(getSelectedOutputParameters());
-    {% comment %} if (getSelectedOutputParameters().length === 0) {
+    const selectedOutputParams = getSelectedOutputParameters(); // Get selected parameters
+
+    if (selectedOutputParams.length === 0) {
       toastr("Please select at least one output parameter.", "error");
       return;
-    } {% endcomment %}
+    }
+
+    // Send selected parameters with the query
     fetch('/run-query/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}',
+        'X-CSRFToken': '{{ csrf_token }}', // CSRF token for Django
       },
       body: JSON.stringify({
         query: queryTree,
-        output_parameters: Array.from(new Set([
-          ...getSelectedOutputParameters().map(Number),
-          ...extractUsedParams(queryTree)
-        ]))
+        output_parameters: selectedOutputParams // Pass the selected output parameters here
       })
     })
     .then(res => res.json())
@@ -850,7 +951,6 @@
     bootstrap.Modal.getInstance(document.getElementById("exportQueryModal")).hide();
   }
 
-
   function importQueryFromFile(event) {
     const file = event.target.files[0];
     const filename = file.name.replace(/\.[^/.]+$/, ""); // Remove .json/.txt/etc.
@@ -863,6 +963,7 @@
       try {
         const data = JSON.parse(e.target.result);
         queryTree = data.query;
+        updateSelectedOutputDisplay(); // Automatically update the Output Parameters list
         renderBuilder();
 
         const outputIDs = data.output_parameters || [];
@@ -995,6 +1096,7 @@
                 }
                 currentQueryName = query.name;
                 document.getElementById("current-query-title").textContent = `Query Builder – ${currentQueryName}`;
+                updateSelectedOutputDisplay(); // Automatically update the Output Parameters list
                 renderBuilder();
                 bootstrap.Modal.getInstance(document.getElementById("loadQueryModal")).hide();
                 toastr("Query loaded successfully!", "success");
@@ -1007,7 +1109,6 @@
         modal.show();
       });
   }
-
 
   function exportToCSV() {
     const table = document.querySelector("#query-results table");
@@ -1136,7 +1237,6 @@
     btn.innerHTML = isHidden ? "&#x25BC;" : "&#x25B6;";
   }
 
-
   function toggleCategory(categoryName, isChecked) {
     cachedParameters.forEach(param => {
       if (param.catName === categoryName) {
@@ -1159,7 +1259,6 @@
 
   }
 
-
   function filterOutputParameters(text) {
     renderOutputParameters(text);
   }
@@ -1176,8 +1275,14 @@
   }
 
   function getSelectedOutputParameters() {
-    return Array.from(document.querySelectorAll('.output-param-checkbox:checked'))
-                .map(cb => cb.value);
+    const manuallySelected = Array.from(document.querySelectorAll('.output-param-checkbox:checked'))
+                                  .map(cb => parseInt(cb.value));
+
+    const fromQueryTree = extractUsedParams(queryTree);
+
+    const merged = Array.from(new Set([...manuallySelected, ...fromQueryTree]));
+
+    return merged;
   }
 
   function selectGroupParameters(categoryName, subcategoryName = null) {
@@ -1195,12 +1300,22 @@
   function updateSelectedOutputDisplay() {
     const selected = getSelectedOutputParameters();
     const displayContainer = document.getElementById("selected-output-names");
-    displayContainer.innerHTML = ""; // clear current
+    displayContainer.innerHTML = ""; // Clear previous content
 
     const names = selected
       .map(id => cachedParameters.find(p => p.id == id))
       .filter(Boolean);
 
+    // Add used parameters from the query (if not already added)
+    const usedQueryParams = extractUsedParams(queryTree);
+    usedQueryParams.forEach(paramId => {
+      const param = cachedParameters.find(p => p.id === paramId);
+      if (param && !names.some(n => n.id === paramId)) {
+        names.push(param);
+      }
+    });
+
+    // Display the names as badges
     if (names.length === 0) {
       displayContainer.innerHTML = "<small class='text-muted'>None selected</small>";
       return;
@@ -1234,7 +1349,6 @@
     document.querySelectorAll('.output-param-checkbox').forEach(cb => cb.checked = false);
     updateSelectedOutputDisplay();
   }
-
 
   renderBuilder();
   renderOutputParameters();
@@ -1284,6 +1398,87 @@
         toast.remove();
       }
     }, 2500);
+  }
+
+  let currentLookup = { groupId: null, condId: null };
+
+  let allLookupValues = [];  // stores all fetched values for filtering
+
+  let selectedLookupValues = new Set();  // track checked values even after filtering
+
+  function renderLookupList(values) {
+    const valuesDiv = document.getElementById("lookup-values");
+    valuesDiv.innerHTML = "";
+
+    if (values.length === 0) {
+      valuesDiv.innerHTML = "<p class='text-muted'>No matching values found.</p>";
+      return;
+    }
+
+    values.forEach(val => {
+      const checkbox = document.createElement("div");
+      checkbox.className = "form-check";
+
+      const isChecked = selectedLookupValues.has(val);
+
+      checkbox.innerHTML = `
+        <input class="form-check-input" type="checkbox" value="${val}" ${isChecked ? "checked" : ""}>
+        <label class="form-check-label">${val}</label>
+      `;
+
+      const input = checkbox.querySelector("input");
+      input.addEventListener("change", (e) => {
+        if (e.target.checked) {
+          selectedLookupValues.add(val);
+        } else {
+          selectedLookupValues.delete(val);
+        }
+      });
+
+      valuesDiv.appendChild(checkbox);
+    });
+  }
+
+  function filterLookupValues(text) {
+    const filtered = allLookupValues.filter(v =>
+      v.toLowerCase().includes(text.toLowerCase())
+    );
+    renderLookupList(filtered);
+  }
+
+  function openLookupModal(groupId, condId) {
+    currentLookup = { groupId, condId };
+    const cond = findGroupById(queryTree, groupId).children.find(c => c.id === condId);
+    const paramId = cond.parameter;
+
+    selectedLookupValues = new Set(
+      Array.isArray(cond.value) ? cond.value :
+      (cond.value || "").split(",").map(v => v.trim()).filter(Boolean)
+    );
+
+    document.getElementById("lookup-values").innerHTML = "Loading...";
+
+    // 🛠 Safe fetch, then open modal
+    fetch(`/lookup-values/?parameter_id=${paramId}`)
+      .then(res => res.json())
+      .then(data => {
+        allLookupValues = data.values || [];
+        renderLookupList(allLookupValues);
+
+        // 🛠 Reinitialize modal on every call
+        const modalEl = document.getElementById("lookupModal");
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl); // 👈 KEY FIX
+        modal.show();
+      });
+  }
+
+  function applyLookupValues() {
+    const checked = [...document.querySelectorAll("#lookup-values input:checked")].map(cb => cb.value);
+    const cond = findGroupById(queryTree, currentLookup.groupId).children.find(c => c.id === currentLookup.condId);
+    cond.value = [...selectedLookupValues];  // Store as array
+
+    bootstrap.Modal.getInstance(document.getElementById("lookupModal")).hide();
+    renderBuilder();
   }
 
 </script>
@@ -1390,11 +1585,6 @@
     transform: scale(0.85);
     margin-top: 3px;
   }
-{% comment %} 
-  .btn-outline-secondary {
-    font-size: 12px;
-    padding: 1px 5px;
-  } {% endcomment %}
 
   .search-bar {
     font-size: 12px;
@@ -1466,7 +1656,7 @@
   .run-query-btn {
     background: transparent;
     font-weight: bold;
-    display: flex;
+    /* display: flex; */
     align-items: center;
     justify-content: flex-start;
     padding: 10px 72px;
@@ -1533,22 +1723,56 @@
     color: #fff;
   }
 
-  .btn-dark-gray {
-    background-color: #444;
-    color: white;
-    border: none;
+  .menu-button {
+    background-color: white;
+    color: black;
     font-weight: bold;
+    border: none;
+    padding: 10px 20px;
+    transition: all 0.2s ease;
   }
-  
-  .btn-dark-gray:hover {
-    background-color: #666;
+
+  .menu-button:hover {
+    background-color: #b0b0b0; /* light gray */
     color: white;
   }
-  
-  .btn-dark-gray:active {
-    background-color: #222;
+
+  .menu-button:active {
+    background-color: #444444; /* dark gray */
     color: white;
-    box-shadow: inset 0 2px 6px rgba(0,0,0,0.3);
+  }
+
+  /* Hover effect for rows (conditions and groups) */
+  .condition-list li:hover, .group:hover {
+    background-color: #d3d3d3;  /* Darker grey for hover effect */
+    cursor: pointer;
+  }
+
+  /* Selected effect for rows (conditions and groups) */
+  .condition-list li.selected, .group.selected {
+    background-color: #a9a9a9;  /* Even darker grey for selection */
+    color: white;  /* Ensure text is visible */
+    border: 2px solid #666;  /* Border to show it's selected */
+  }
+
+  /* Styling for selected items with checkbox (to be checked by JS) */
+  .condition-selector-checkbox:checked + li {
+    background-color: #a9a9a9;  /* Dark grey for selected */
+    color: white;
+    border: 2px solid #666;
+  }
+
+  /* Hover effect for rows (conditions and groups) */
+  .condition-row:hover {
+    background-color: #d3d3d3;  /* Darker grey for hover effect */
+    cursor: pointer;
+  }
+
+  /* Selected effect for rows (conditions and groups) */
+  .condition-row.selected {
+    background-color: #a9a9a9;  /* Even darker grey for selection */
+    color: white;  /* Ensure text is visible */
+    border: 2px solid #666;  /* Border to show it's selected */
   }
 
 
@@ -1623,6 +1847,26 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary" onclick="exportQueryWithName()">Export</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Lookup Modal -->
+<div class="modal fade" id="lookupModal" tabindex="-1" aria-labelledby="lookupModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="lookupModalLabel">Select Value(s)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="lookup-search" class="form-control form-control-sm mb-3" placeholder="Search values..." oninput="filterLookupValues(this.value)">
+        <div id="lookup-values" style="max-height: 300px; overflow-y: auto;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="applyLookupValues()">Apply</button>
       </div>
     </div>
   </div>

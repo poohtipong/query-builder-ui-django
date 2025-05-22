@@ -10,29 +10,10 @@
 {% endif %}
 
 <!-- Add Database -->
-<div class="card mb-4 shadow-sm">
-  <div class="card-header">Add New Database</div>
-  <div class="card-body">
-    <form method="post">
-      {% csrf_token %}
-      <input type="hidden" name="create" value="1">
-      <div class="row g-3">
-        {% for field in fields %}
-          <div class="col-md-4">
-            <label class="form-label">{{ field|title }}</label>
-            {% if field == 'password' %}
-              <input type="password" name="{{ field }}" class="form-control" required>
-            {% else %}
-              <input type="text" name="{{ field }}" class="form-control" required>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
-      <div class="mt-3">
-        <button class="btn btn-primary"><i class="fas fa-plus-circle"></i> Add & Introspect</button>
-      </div>
-    </form>
-  </div>
+<div class="mb-3">
+  <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addDatabaseModal">
+    <i class="fas fa-plus"></i> Add Database
+  </button>
 </div>
 
 <!-- List Databases -->
@@ -42,7 +23,7 @@
     <table class="table table-bordered table-hover table-sm align-middle">
       <thead class="table-light">
         <tr>
-          <th>Name</th>
+          <th>Hospital Name</th>
           <th>Host</th>
           <th>Port</th>
           <th>User</th>
@@ -61,6 +42,24 @@
           <td>{{ db.db_name }}</td>
           <td>{{ db.hospital_id }}</td>
           <td>
+            <button class="btn btn-sm btn-secondary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#editDatabaseModal"
+                    data-id="{{ db.id }}"
+                    data-name="{{ db.name }}"
+                    data-host="{{ db.host }}"
+                    data-port="{{ db.port }}"
+                    data-user="{{ db.user }}"
+                    data-password="{{ db.password }}"
+                    data-dbname="{{ db.db_name }}">
+              <i class="fas fa-edit"></i> Edit
+            </button>
+            <form method="post" style="display: inline;">
+              {% csrf_token %}
+              <input type="hidden" name="introspect" value="1">
+              <input type="hidden" name="db_id" value="{{ db.id }}">
+              <button class="btn btn-sm btn-info"><i class="fas fa-search"></i> Introspect</button>
+            </form>
             <form method="post" onsubmit="return confirm('Are you sure?')" style="display: inline;">
               {% csrf_token %}
               <input type="hidden" name="delete" value="1">
@@ -76,4 +75,222 @@
     </table>
   </div>
 </div>
+
+
+<div class="modal fade" id="addDatabaseModal" tabindex="-1" aria-labelledby="addDatabaseModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <form method="post" class="modal-content">
+      {% csrf_token %}
+      <input type="hidden" name="create" value="1">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addDatabaseModalLabel">Add New Database</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Hospital Name</label>
+            <input type="text" name="name" class="form-control form-control-sm" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Host</label>
+            <input type="text" name="host" class="form-control form-control-sm" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Port</label>
+            <input type="number" name="port" class="form-control form-control-sm" value="3306">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">User</label>
+            <input type="text" name="user" class="form-control form-control-sm" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Password</label>
+            <input type="password" name="password" class="form-control form-control-sm" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Database Name</label>
+            <input type="text" name="db_name" class="form-control form-control-sm" required>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="add-submit-button" class="btn btn-sm btn-success" disabled>
+          <i class="fas fa-plus-circle"></i> Add DB Info
+        </button>
+        <div class="col-md-12 text-end">
+          <button type="button" class="btn btn-outline-info btn-sm" onclick="testAddConnection()">
+            <i class="fas fa-wifi"></i> Test Connection
+          </button>
+          <span id="add-test-connection-result" class="ms-2 text-muted"></span>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<div class="modal fade" id="editDatabaseModal" tabindex="-1" aria-labelledby="editDatabaseModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <form method="post" id="editDatabaseForm" class="modal-content">
+      {% csrf_token %}
+      <input type="hidden" name="edit" value="1">
+      <input type="hidden" name="db_id" id="edit-db-id">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit External Database</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Hospital Name</label>
+          <input type="text" name="name" id="edit-name" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Host</label>
+          <input type="text" name="host" id="edit-host" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Port</label>
+          <input type="number" name="port" id="edit-port" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">User</label>
+          <input type="text" name="user" id="edit-user" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Password</label>
+          <input type="text" name="password" id="edit-password" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Database Name</label>
+          <input type="text" name="db_name" id="edit-dbname" class="form-control form-control-sm" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-primary">Save Changes</button>
+        <div class="col-md-12 text-end">
+          <button type="button" class="btn btn-outline-info btn-sm" onclick="testConnection()">
+            <i class="fas fa-wifi"></i> Test Connection
+          </button>
+          <span id="test-connection-result" class="ms-2 text-muted"></span>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const editDbModal = document.getElementById('editDatabaseModal');
+  if (editDbModal) {
+    editDbModal.addEventListener('show.bs.modal', function (event) {
+      const button = event.relatedTarget;
+      document.getElementById("edit-db-id").value = button.getAttribute("data-id");
+      document.getElementById("edit-name").value = button.getAttribute("data-name");
+      document.getElementById("edit-host").value = button.getAttribute("data-host");
+      document.getElementById("edit-port").value = button.getAttribute("data-port");
+      document.getElementById("edit-user").value = button.getAttribute("data-user");
+      document.getElementById("edit-password").value = button.getAttribute("data-password");
+      document.getElementById("edit-dbname").value = button.getAttribute("data-dbname");
+    });
+  }
+
+function testConnection() {
+  const host = document.getElementById("edit-host").value;
+  const port = document.getElementById("edit-port").value;
+  const user = document.getElementById("edit-user").value;
+  const password = document.getElementById("edit-password").value;
+  const db_name = document.getElementById("edit-dbname").value;
+
+  const resultSpan = document.getElementById("test-connection-result");
+  resultSpan.innerHTML = "⏳ Testing...";
+
+  fetch("{% url 'test_connection' %}", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}"
+    },
+    body: JSON.stringify({ host, port, user, password, db_name })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === "success") {
+      resultSpan.innerHTML = "✅ " + data.message;
+      resultSpan.className = "ms-2 text-success";
+    } else {
+      resultSpan.innerHTML = "❌ " + data.message;
+      resultSpan.className = "ms-2 text-danger";
+    }
+  })
+  .catch(error => {
+    resultSpan.innerHTML = "❌ Connection error.";
+    resultSpan.className = "ms-2 text-danger";
+  });
+}
+
+
+let addConnectionTestPassed = false;
+let lastAddFormSnapshot = "";
+
+function testAddConnection() {
+  const host = document.querySelector('#addDatabaseModal [name="host"]').value;
+  const port = document.querySelector('#addDatabaseModal [name="port"]').value;
+  const user = document.querySelector('#addDatabaseModal [name="user"]').value;
+  const password = document.querySelector('#addDatabaseModal [name="password"]').value;
+  const db_name = document.querySelector('#addDatabaseModal [name="db_name"]').value;
+
+  const resultSpan = document.getElementById("add-test-connection-result");
+  const addButton = document.getElementById("add-submit-button");
+
+  resultSpan.innerHTML = "⏳ Testing...";
+  addButton.disabled = true;
+
+  const formSnapshot = [host, port, user, password, db_name].join("|");
+  lastAddFormSnapshot = formSnapshot;
+
+  fetch("{% url 'test_connection' %}", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}"
+    },
+    body: JSON.stringify({ host, port, user, password, db_name })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === "success") {
+      resultSpan.innerHTML = "✅ " + data.message;
+      resultSpan.className = "ms-2 text-success";
+      addConnectionTestPassed = true;
+      addButton.disabled = false;
+    } else {
+      resultSpan.innerHTML = "❌ " + data.message;
+      resultSpan.className = "ms-2 text-danger";
+      addConnectionTestPassed = false;
+    }
+  })
+  .catch(() => {
+    resultSpan.innerHTML = "❌ Connection error.";
+    resultSpan.className = "ms-2 text-danger";
+    addConnectionTestPassed = false;
+  });
+}
+
+// Invalidate test if any input changes
+document.querySelectorAll('#addDatabaseModal input').forEach(input => {
+  input.addEventListener("input", () => {
+    const currentSnapshot = Array.from(document.querySelectorAll('#addDatabaseModal input'))
+      .map(i => i.value).join("|");
+
+    if (currentSnapshot !== lastAddFormSnapshot) {
+      document.getElementById("add-test-connection-result").innerHTML = "⚠️ Retest required";
+      document.getElementById("add-test-connection-result").className = "ms-2 text-warning";
+      document.getElementById("add-submit-button").disabled = true;
+      addConnectionTestPassed = false;
+    }
+  });
+});
+
+</script>
+
 {% endblock %}

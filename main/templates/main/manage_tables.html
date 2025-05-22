@@ -1,0 +1,101 @@
+{% extends "volt/layouts/base.html" %}
+{% load custom_filters %}
+{% block content %}
+
+<h2 class="mb-4"><i class="fas fa-table"></i> Manage Imported Tables</h2>
+
+    {% regroup tables by external_db.name as db_groups %}
+
+    {% for db_group in db_groups %}
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-dark text-white">
+        <i class="fas fa-hospital-symbol me-1"></i> {{ db_group.grouper }}
+        </div>
+        <div class="table-responsive">
+        <table class="table table-sm table-bordered align-middle w-100" style="table-layout: fixed;">
+            <thead class="table-light">
+            <tr>
+                <th>Table Name</th>
+                <th>Table Type</th>
+                <th>Study ID Column</th>
+                <th>Patient ID Column</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for tbl in db_group.list %}
+                <tr>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="table_id" value="{{ tbl.id }}">
+
+                    <td><strong>{{ tbl.name }}</strong></td>
+
+                    <td style="padding: 0.1rem;">
+                    <select name="table_type"  style="border: none;" class="form-select w-100" required>
+                        {% for val, label in table_type_choices %}
+                        <option value="{{ val }}" {% if tbl.table_type == val %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    </td>
+                    <td style="padding: 0.1rem;">
+                    <div class="w-100">
+                        <select name="study_id_column" style="border: none;" class="form-select w-100">
+                        <option value="">-- None --</option>
+                        {% with table_columns=all_columns|dict_get:tbl.name %}
+                        {% for col in table_columns %}
+                            <option value="{{ col.name }}" {% if tbl.study_id_column == col.name %}selected{% endif %}>{{ col.name }}</option>
+                        {% endfor %}
+                        {% endwith %}
+                        </select>
+                    </div>
+                    </td>
+
+                    <td style="padding: 0.1rem;">
+                    <select name="patient_id_column" style="border: none;" class="form-select w-100">
+                        <option value="">-- None --</option>
+                        {% with table_columns=all_columns|dict_get:tbl.name %}
+                        {% for col in table_columns %}
+                            <option value="{{ col.name }}" {% if tbl.patient_id_column == col.name %}selected{% endif %}>{{ col.name }}</option>
+                        {% endfor %}
+                        {% endwith %}
+                    </select>
+                    </td>
+
+                    <td class="text-center">
+                    <button type="submit" class="btn btn-sm btn-primary">
+                        <i class="fas fa-save"></i> Save
+                    </button>
+                    </td>
+                </form>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endfor %}
+<style>
+  td > .w-100 {
+    width: 100%;
+  }
+
+  td select.form-select {
+    width: 100% !important;
+    min-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .table {
+    table-layout: fixed;
+  }
+
+  .table th, .table td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+
+
+{% endblock %}

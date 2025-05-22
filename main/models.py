@@ -69,6 +69,13 @@ class ColumnMapping(models.Model):
 class ImportedTable(models.Model):
     external_db = models.ForeignKey(ExternalDatabase, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
+    table_type = models.CharField(
+        max_length=20,
+        choices=[("patient", "Patient"), ("study", "Study"), ("study_sub", "Study Sub")],
+        default="study_sub"
+    )
+    study_id_column = models.CharField(max_length=100, null=True, blank=True)
+    patient_id_column = models.CharField(max_length=100, null=True, blank=True)
 
     def __str__(self):
         return f"{self.name} ({self.external_db.name})"

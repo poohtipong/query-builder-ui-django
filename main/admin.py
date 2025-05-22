@@ -42,7 +42,7 @@ class ParameterAdmin(admin.ModelAdmin):
 
 @admin.register(ImportedTable)
 class ImportedTableAdmin(admin.ModelAdmin):
-    list_display = ('name', 'external_db')
+    list_display = ('name', 'external_db', 'table_type')
     list_filter = ('external_db',)
 
 @admin.register(ImportedColumn)

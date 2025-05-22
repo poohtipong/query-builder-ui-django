@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.db import models
 # Create your views here.
 from django.core.serializers.json import DjangoJSONEncoder
 from .models import ExternalDatabase, Message, Parameter, ImportedColumn, ImportedTable, SubCategory, Category, Query, QueryGroup, QueryCondition, QueryLog
@@ -16,9 +17,8 @@ from .forms import UserRegistrationForm
 from django.contrib.auth import logout
 from collections import defaultdict
 from django.contrib import messages
-from django.views.decorators.http import require_http_methods
-import json
-import pymysql
+from django.views.decorators.http import require_http_methods, require_GET
+import json, uuid, pymysql, hashlib
 
 def register(request):
     if request.method == 'POST':
@@ -167,9 +167,12 @@ def build_where_clause(group, param_map):
                 if not param:
                     continue
 
-                col = f"`{param['column']}`"
+                col = f"`{param['table']}`.`{param['column']}`"
                 operator = item['operator'].lower()
-                value = item.get("value", "").strip()
+                value = item.get("value", [])
+                # Handle case: string from UI vs list
+                if isinstance(value, str):
+                    value = [v.strip() for v in value.split(",") if v.strip()]
 
                 # Map operator to SQL
                 op_map = {
@@ -186,24 +189,35 @@ def build_where_clause(group, param_map):
                     'does_not_exist': 'IS NULL'
                 }
 
-                if operator in ['contains', 'not_contains']:
-                    condition = f"{col} {op_map[operator]} '%{value}%'"
+                if operator in ['contains', 'does_not_contain']:
+                    like_conditions = [f"{col} {op_map[operator]} '%{v}%'" for v in value]
+                    logic = " OR " if operator == 'contains' else " AND "
+                    condition = f"({logic.join(like_conditions)})"
                 elif operator == 'is_included':
-                    value_list = [v.strip() for v in value.split(",") if v.strip()]
-                    in_values = ", ".join(f"'{v}'" for v in value_list)
+                    in_values = ", ".join(f"'{v}'" for v in value)
                     condition = f"{col} IN ({in_values})"
                 elif operator == 'is_excluded':
-                    value_list = [v.strip() for v in value.split(",") if v.strip()]
-                    in_values = ", ".join(f"'{v}'" for v in value_list)
+                    in_values = ", ".join(f"'{v}'" for v in value)
                     condition = f"{col} NOT IN ({in_values})"
                 elif operator == 'starts_with':
-                    condition = f"{col} {op_map[operator]} '{value}%'"
+                    like_conditions = [f"{col} LIKE '{v}%'" for v in value]
+                    condition = "(" + " OR ".join(like_conditions) + ")"
                 elif operator == 'ends_with':
-                    condition = f"{col} {op_map[operator]} '%{value}'"
+                    like_conditions = [f"{col} LIKE '%{v}'" for v in value]
+                    condition = "(" + " OR ".join(like_conditions) + ")"
                 elif operator == 'is_equal_to':
-                    condition = f"{col} = '{value}'"
+                    if len(value) == 1:
+                        condition = f"{col} = '{value[0]}'"
+                    else:
+                        or_conditions = [f"{col} = '{v}'" for v in value]
+                        condition = "(" + " OR ".join(or_conditions) + ")"
                 elif operator == 'is_not_equal_to':
-                    condition = f"{col} != '{value}'"
+                    if len(value) == 1:
+                        condition = f"{col} != '{value[0]}'"
+                    else:
+                        and_conditions = [f"{col} != '{v}'" for v in value]
+                        condition = "(" + " AND ".join(and_conditions) + ")"
+
                 elif operator == 'is_between':
                     val0 = item.get("value0", "").strip()
                     val1 = item.get("value1", "").strip()
@@ -245,92 +259,113 @@ def build_where_clause(group, param_map):
 
     return ''.join(sql_parts)
 
+from django.http import JsonResponse
+from .models import Parameter, ImportedTable, QueryLog
+import pymysql
+import json
+
 @login_required
 def run_query(request):
-    if request.method == "POST":
-        data = json.loads(request.body)
+    if request.method != "POST":
+        return JsonResponse({"status": "error", "message": "Only POST method is allowed."}, status=405)
 
-        # Log the query
-        QueryLog.objects.create(
-            user=request.user,
-            query_structure=data.get("query", {}),
-            output_parameters=data.get("output_parameters", [])
-        )
+    data = json.loads(request.body)
 
-        param_map = {}
-        for param in Parameter.objects.select_related("subcategory__category").all():
-            try:
-                imported_column = param.importedcolumn
-                param_map[param.id] = {
-                    "column": imported_column.name,
-                    "table": imported_column.table.name,
-                    "db": imported_column.table.external_db.db_name
-                }
-            except Exception:
-                continue
-        
-        # Extract all used parameters in query
-        used_param_ids = extract_used_param_ids(data["query"])
+    QueryLog.objects.create(
+        user=request.user,
+        query_structure=data.get("query", {}),
+        output_parameters=data.get("output_parameters", [])
+    )
 
-        # Merge used params with selected outputs
-        selected_output_ids = set(map(int, data.get("output_parameters", [])))
-        merged_output_ids = list(set(used_param_ids) | selected_output_ids)
+    param_map = {}
+    for param in Parameter.objects.select_related("subcategory__category").all():
+        try:
+            imported_column = param.importedcolumn
+            param_map[param.id] = {
+                "column": imported_column.name,
+                "table": imported_column.table.name,
+                "table_type": imported_column.table.table_type,
+                "db": imported_column.table.external_db.db_name
+            }
+        except Exception:
+            continue
 
-        output_columns = [f"`{param_map[int(pid)]['column']}`" for pid in merged_output_ids if int(pid) in param_map]
+    used_param_ids = extract_used_param_ids(data["query"])
+    selected_output_ids = set(map(int, data.get("output_parameters", [])))
+    merged_output_ids = list(set(used_param_ids) | selected_output_ids)
 
-        used_tables = set()
-        for pid in used_param_ids:
-            param = param_map.get(int(pid))
-            if param:
-                used_tables.add(param["table"])
-        tables = ', '.join(f"`{tbl}`" for tbl in used_tables)
+    needs_study_info = any(param_map[int(pid)]["table_type"] == "study" for pid in merged_output_ids)
+    needed_study_sub_tables = {param_map[int(pid)]["table"]
+                               for pid in merged_output_ids
+                               if param_map[int(pid)]["table_type"] == "study_sub"}
 
-        where_clause = build_where_clause(data["query"], param_map)
+    joins = ["`patient_info`"]
+    if needs_study_info or needed_study_sub_tables:
+        joins.append("INNER JOIN `study_info` ON `study_info`.`MRN` = `patient_info`.`MRN`")
 
-        any_param = next(iter(param_map.values()))
-        table_name = any_param['table']
-        external_db = ImportedTable.objects.get(name=table_name).external_db
+    for sub_table in needed_study_sub_tables:
+        joins.append(f"LEFT JOIN `{sub_table}` ON `{sub_table}`.`Study_ID` = `study_info`.`Study_ID`")
 
-        import pymysql
-        connection = pymysql.connect(
-            host=external_db.host,
-            user=external_db.user,
-            password=external_db.password,
-            database=external_db.db_name,
-            port=external_db.port
-        )
+    tables_clause = "\n".join(joins)
 
-        output_param_ids = data.get("output_parameters", [])
-        output_columns = [f"`{param_map[int(pid)]['column']}`" for pid in output_param_ids if int(pid) in param_map]
-        select_clause = ', '.join(output_columns) if output_columns else '*'
+    # Always internally add MRN and Study_ID for unique count
+    internal_id_columns = ["`patient_info`.`MRN`"]
+    if needs_study_info or needed_study_sub_tables:
+        internal_id_columns.append("`study_info`.`Study_ID`")
 
-        sql = f"SELECT {select_clause} FROM {tables} WHERE {where_clause}"
+    output_columns = [f"`{param_map[int(pid)]['table']}`.`{param_map[int(pid)]['column']}`"
+                      for pid in merged_output_ids if int(pid) in param_map]
 
-        print(sql)
+    select_clause = ", ".join(set(output_columns + internal_id_columns)) if output_columns else "*"
 
-        with connection.cursor() as cursor:
-            cursor.execute(sql)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
+    where_clause = build_where_clause(data["query"], param_map)
 
-        connection.close()
+    any_param = next(iter(param_map.values()))
+    external_db = ImportedTable.objects.get(name=any_param['table']).external_db
 
-        result_dicts = [dict(zip(columns, row)) for row in rows]
+    connection = pymysql.connect(
+        host=external_db.host,
+        user=external_db.user,
+        password=external_db.password,
+        database=external_db.db_name,
+        port=external_db.port
+    )
 
-        # Try to find a column for unique patient identifier
-        id_keys = ["MRN", "Study_ID", "patient_id", "mrn", "study_id", "medical_record_number"]
-        found_key = next((key for key in id_keys if key in columns), None)
+    sql = f"SELECT {select_clause} FROM {tables_clause} WHERE {where_clause}"
+    print(sql)
 
-        unique_count = len(set(row[found_key] for row in result_dicts if found_key and row.get(found_key)))
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
 
-        return JsonResponse({
-            "status": "success",
-            "results": result_dicts,
-            "columns": columns,
-            "unique_count": unique_count
-        })
+    connection.close()
 
-    return JsonResponse({"status": "error", "message": "Only POST method is allowed."}, status=405)
+    result_dicts = [dict(zip(columns, row)) for row in rows]
+
+    # Compute unique count using MRN or Study_ID even if not in output
+    unique_ids = set()
+    if "MRN" in columns:
+        unique_ids = {row["MRN"] for row in result_dicts if row.get("MRN")}
+    elif "Study_ID" in columns:
+        unique_ids = {row["Study_ID"] for row in result_dicts if row.get("Study_ID")}
+
+    # Prepare display results (remove internal ID columns if not requested)
+    display_columns = [col for col in columns if col not in ["MRN", "Study_ID"] or
+                       col in [param_map[int(pid)]["column"] for pid in merged_output_ids]]
+
+    display_results = [
+        {k: row[k] for k in display_columns} for row in result_dicts
+    ]
+
+    return JsonResponse({
+        "status": "success",
+        "results": display_results,
+        "columns": display_columns,
+        "unique_count": len(unique_ids)
+    })
+
+
 
 @csrf_exempt
 def save_query_structure(request):
@@ -448,17 +483,38 @@ def admin_dashboard_view(request):
 def manage_databases_view(request):
     if request.method == "POST":
         if "create" in request.POST:
+            unique_id = f"HOSP-{uuid.uuid4().hex[:8].upper()}"
+
             db_obj = ExternalDatabase.objects.create(
                 name=request.POST.get("name"),
                 host=request.POST.get("host"),
-                port=int(request.POST.get("port", 3306)),  # ✅ fix here
+                port=int(request.POST.get("port", 3306)),
                 user=request.POST.get("user"),
                 password=request.POST.get("password"),
                 db_name=request.POST.get("db_name"),
-                hospital_id=request.POST.get("hospital_id")
+                hospital_id=unique_id
             )
-            introspect_database(db_obj)
-            messages.success(request, f"Database '{db_obj.name}' created and schema imported.")
+            messages.success(request, f"Database '{db_obj.name}' created.")
+        
+        elif "edit" in request.POST:
+            db_id = request.POST.get("db_id")
+            db = ExternalDatabase.objects.get(id=db_id)
+
+            db.name = request.POST.get("name")
+            db.host = request.POST.get("host")
+            db.port = int(request.POST.get("port", 3306))
+            db.user = request.POST.get("user")
+            db.password = request.POST.get("password")
+            db.db_name = request.POST.get("db_name")
+            db.save()
+
+            messages.success(request, f"Database '{db.name}' updated successfully.")
+
+        elif "introspect" in request.POST:
+            db_id = request.POST.get("db_id")
+            db = ExternalDatabase.objects.get(id=db_id)
+            introspect_database(db)
+            messages.success(request, f"Database '{db.name}' introspected.")
 
         elif "delete" in request.POST:
             db_id = request.POST.get("db_id")
@@ -574,3 +630,181 @@ def edit_parameter_view(request, parameter_id):
 def delete_parameter_view(request, parameter_id):
     Parameter.objects.filter(id=parameter_id).delete()
     return redirect("manage_categories")
+
+@csrf_exempt
+@staff_member_required
+def test_connection_view(request):
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            connection = pymysql.connect(
+                host=data.get("host"),
+                user=data.get("user"),
+                password=data.get("password"),
+                database=data.get("db_name"),
+                port=int(data.get("port", 3306))
+            )
+            connection.close()
+            return JsonResponse({"status": "success", "message": "Connection successful!"})
+        except Exception as e:
+            return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+@staff_member_required
+def manage_tables_view(request):
+    from .models import ImportedTable, ImportedColumn
+
+    TABLE_TYPE_CHOICES = ImportedTable._meta.get_field("table_type").choices
+
+    if request.method == "POST":
+        table_id = request.POST.get("table_id")
+        table_type = request.POST.get("table_type")
+        study_col = request.POST.get("study_id_column")
+        patient_col = request.POST.get("patient_id_column")
+
+        table = ImportedTable.objects.get(id=table_id)
+        table.table_type = table_type
+        table.study_id_column = study_col or None
+        table.patient_id_column = patient_col or None
+        table.save()
+
+    tables = ImportedTable.objects.select_related("external_db").all()
+    all_columns = {
+        tbl.name: ImportedColumn.objects.filter(table=tbl) for tbl in tables
+    }
+
+    return render(request, "main/manage_tables.html", {
+        "tables": tables,
+        "all_columns": all_columns,
+        "table_type_choices": TABLE_TYPE_CHOICES,
+    })
+
+@staff_member_required
+def generate_ids_view(request):
+    from .models import ImportedTable
+    from django.db.models import Q
+
+    if request.method == "POST":
+        return generate_ids_for_table(request)
+
+    # Just load basic info
+    tables = ImportedTable.objects.filter(
+        Q(study_id_column__isnull=False) | Q(patient_id_column__isnull=False)
+    ).select_related("external_db")
+
+    return render(request, "main/generate_ids.html", {
+        "tables": tables
+    })
+
+def generate_ids_for_table(request):
+    from .models import ImportedTable
+    import pymysql
+
+    table_id = request.POST.get("table_id")
+    tbl = ImportedTable.objects.get(id=table_id)
+    db = tbl.external_db
+
+    conn = pymysql.connect(
+        host=db.host,
+        port=db.port,
+        user=db.user,
+        password=db.password,
+        database=db.db_name
+    )
+    cursor = conn.cursor()
+
+    columns_to_check = []
+    if tbl.study_id_column:
+        columns_to_check.append(("STUDY", tbl.study_id_column))
+    if tbl.patient_id_column:
+        columns_to_check.append(("PATIENT", tbl.patient_id_column))
+
+    for id_type, col in columns_to_check:
+        cursor.execute(f"SELECT DISTINCT `{col}` FROM `{tbl.name}` WHERE `{col}` IS NOT NULL")
+        values = cursor.fetchall()
+        for row in values:
+            raw_value = str(row[0])
+            get_or_create_anon_id(db.hospital_id, id_type, raw_value)
+
+    cursor.close()
+    conn.close()
+
+    messages.success(request, f"Generated anonymous IDs for {tbl.name}")
+    return redirect("generate_ids")
+
+def get_or_create_anon_id(hospital_id, id_type, original_value):
+    from .models import UniqueIDMap
+
+    # Check if already exists
+    existing = UniqueIDMap.objects.filter(
+        hospital_id=hospital_id,
+        type=id_type,
+        original_value=original_value
+    ).first()
+
+    if existing:
+        return existing.generated_id
+
+    # Build prefix (e.g., HOSP-CC2522CD-S or HOSP-CC2522CD-P)
+    prefix = f"{hospital_id}-{'S' if id_type == 'STUDY' else 'P'}"
+
+    # Hash the original value into short string
+    short_hash = hashlib.sha256(original_value.encode()).hexdigest()[:7].upper()
+
+    generated_id = f"{prefix}-{short_hash}"
+
+    UniqueIDMap.objects.create(
+        hospital_id=hospital_id,
+        type=id_type,
+        original_value=original_value,
+        generated_id=generated_id
+    )
+
+    return generated_id
+
+
+@require_GET
+@login_required
+def lookup_values(request):
+    param_id = request.GET.get("parameter_id")
+    try:
+        param = Parameter.objects.get(id=param_id)
+        column = param.importedcolumn
+        db = column.table.external_db
+
+        connection = pymysql.connect(
+            host=db.host,
+            user=db.user,
+            password=db.password,
+            database=db.db_name,
+            port=db.port
+        )
+
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT DISTINCT `{column.name}` FROM `{column.table.name}` WHERE `{column.name}` IS NOT NULL LIMIT 1000;")
+            rows = cursor.fetchall()
+
+        connection.close()
+        values = [row[0] for row in rows if row[0] is not None]
+        return JsonResponse({"status": "success", "values": values})
+    except Exception as e:
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+    
+@staff_member_required
+@csrf_exempt
+def move_parameter_view(request):
+    if request.method == "POST":
+        from .models import Parameter, SubCategory
+
+        import json
+        data = json.loads(request.body)
+        param_id = data.get("parameter_id")
+        subcategory_id = data.get("subcategory_id")
+
+        try:
+            param = Parameter.objects.get(id=param_id)
+            sub = SubCategory.objects.get(id=subcategory_id)
+            param.subcategory = sub
+            param.save()
+            return JsonResponse({"status": "success"})
+        except Exception as e:
+            return JsonResponse({"status": "error", "message": str(e)}, status=400)

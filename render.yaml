@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: my-django-app
+    env: python
+    buildCommand: ""
+    startCommand: gunicorn searchByQuery.wsgi:application
+    plan: free
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: searchByQuery.settings

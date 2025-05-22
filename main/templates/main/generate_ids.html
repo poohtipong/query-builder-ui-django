@@ -1,0 +1,46 @@
+{% extends "volt/layouts/base.html" %}
+{% block content %}
+
+<h2 class="mb-4"><i class="fas fa-id-card-alt me-2"></i> Generate Unique IDs</h2>
+
+<table class="table table-sm table-bordered align-middle w-100">
+  <thead class="table-light">
+    <tr>
+      <th>Table Name</th>
+      <th>Hospital</th>
+      <th>Table Type</th>
+      <th>Study ID Column</th>
+      <th>Patient ID Column</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for tbl in tables %}
+    <tr>
+      <form method="post" action="{% url 'generate_ids' %}">
+        {% csrf_token %}
+        <input type="hidden" name="table_id" value="{{ tbl.id }}">
+
+        <td style="padding: 0.5rem;">{{ tbl.name }}</td>
+        <td style="padding: 0.5rem;">{{ tbl.external_db.name }}</td>
+        <td style="padding: 0.5rem;" class="text-capitalize">{{ tbl.table_type }}</td>
+        <td style="padding: 0.5rem;">{{ tbl.study_id_column|default:"—" }}</td>
+        <td style="padding: 0.5rem;">{{ tbl.patient_id_column|default:"—" }}</td>
+        <td style="padding: 0.5rem;" class="text-center">
+          <button class="btn btn-sm btn-success">
+            <i class="fas fa-bolt"></i> Generate
+          </button>
+        </td>
+      </form>
+    </tr>
+    {% empty %}
+    <tr>
+      <td colspan="6" class="text-center text-muted">
+        No tables with ID columns mapped yet.
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
