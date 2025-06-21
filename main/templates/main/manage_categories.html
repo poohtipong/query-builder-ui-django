@@ -260,7 +260,12 @@
   
           <div class="mb-2" id="add-param-unit-group" style="display: none;">
             <label class="form-label">Unit</label>
-            <input type="text" name="unit" id="add-param-unit" class="form-control">
+            <select name="unit" id="add-param-unit" class="form-select">
+              <option value="">-- Select Unit --</option>
+              {% for unit in units %}
+                <option value="{{ unit.name }}" {% if unit.name == param.target_unit %}selected{% endif %}>{{ unit.name }}</option>
+              {% endfor %}
+            </select>
           </div>
   
           <div class="form-check form-switch mb-2">
@@ -312,7 +317,12 @@
   
           <div class="mb-2" id="edit-param-unit-group" style="display: none;">
             <label class="form-label">Unit</label>
-            <input type="text" name="unit" id="edit-param-unit" class="form-control">
+            <select name="unit" id="edit-param-unit" class="form-select">
+              <option value="">-- Select Unit --</option>
+              {% for unit in units %}
+                <option value="{{ unit.name }}">{{ unit.name }}</option>
+              {% endfor %}
+            </select>
           </div>
   
           <div class="form-check form-switch mb-2">

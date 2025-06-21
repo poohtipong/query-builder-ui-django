@@ -20,6 +20,26 @@ class ExternalDatabase(models.Model):
     def __str__(self):
         return self.name
 
+
+class Unit(models.Model):
+    name = models.CharField(max_length=20, unique=True)  # e.g., 'mm', 'cm', 'm'
+
+    def __str__(self):
+        return self.name
+
+
+class UnitConversion(models.Model):
+    from_unit = models.ForeignKey(Unit, related_name='from_conversions', on_delete=models.CASCADE)
+    to_unit = models.ForeignKey(Unit, related_name='to_conversions', on_delete=models.CASCADE)
+    equation = models.CharField(max_length=100)  # e.g., "*10", "*0.001"
+
+    class Meta:
+        unique_together = ('from_unit', 'to_unit')
+
+    def __str__(self):
+        return f"{self.from_unit} to {self.to_unit} = {self.equation}"
+
+
 class Category(models.Model):
     name = models.CharField(max_length=100)
     order = models.IntegerField(default=0)
@@ -44,7 +64,7 @@ class Parameter(models.Model):
         ('float', 'Float'),
     ])
     has_unit = models.BooleanField(default=False)
-    target_unit = models.CharField(max_length=50, null=True, blank=True)
+    target_unit = models.ForeignKey(Unit, null=True, blank=True, on_delete=models.SET_NULL)
     subcategory = models.ForeignKey(SubCategory, on_delete=models.CASCADE)
     is_phi = models.BooleanField(default=False)
     is_hhi = models.BooleanField(default=False)

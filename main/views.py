@@ -2,7 +2,7 @@ from django.shortcuts import render
 from django.db import models
 # Create your views here.
 from django.core.serializers.json import DjangoJSONEncoder
-from .models import ExternalDatabase, Message, Parameter, ImportedColumn, ImportedTable, SubCategory, Category, Query, QueryGroup, QueryCondition, QueryLog
+from .models import ExternalDatabase, Unit, Parameter, ImportedColumn, ImportedTable, SubCategory, Category, Query, QueryGroup, QueryCondition, QueryLog
 from django.contrib.auth.decorators import login_required
 from .utils.introspect_db import introspect_database
 from django.shortcuts import get_object_or_404
@@ -531,8 +531,10 @@ def manage_databases_view(request):
 @staff_member_required
 def manage_categories_view(request):
     categories = Category.objects.prefetch_related("subcategory_set__parameter_set").order_by("order", "name")
+    units = Unit.objects.all().order_by("name")
     return render(request, "main/manage_categories.html", {
-        "categories": categories
+        "categories": categories,
+        "units": units
     })
 
 @staff_member_required
@@ -595,7 +597,8 @@ def create_parameter_view(request):
         is_phi = bool(request.POST.get("is_phi"))
         is_hhi = bool(request.POST.get("is_hhi"))
         has_unit = bool(request.POST.get("has_unit"))
-        unit = request.POST.get("unit") if has_unit else None
+        unit = request.POST.get("unit")
+        unit_obj = Unit.objects.filter(name=unit).first() if has_unit and unit else None
 
         from .models import SubCategory, Parameter
         subcat = SubCategory.objects.get(id=subcat_id)
@@ -607,7 +610,7 @@ def create_parameter_view(request):
             is_phi=is_phi,
             is_hhi=is_hhi,
             has_unit=has_unit,
-            target_unit=unit
+            target_unit=unit_obj
         )
         return redirect("manage_categories")
 
@@ -620,7 +623,9 @@ def edit_parameter_view(request, parameter_id):
         param.name = request.POST.get("name")
         param.data_type = request.POST.get("data_type")
         param.has_unit = bool(request.POST.get("has_unit"))
-        param.target_unit = request.POST.get("unit") if param.has_unit else None
+        unit = request.POST.get("unit")
+        unit_obj = Unit.objects.filter(name=unit).first() if param.has_unit and unit else None
+        param.target_unit = unit_obj
         param.is_phi = bool(request.POST.get("is_phi"))
         param.is_hhi = bool(request.POST.get("is_hhi"))
         param.save()
